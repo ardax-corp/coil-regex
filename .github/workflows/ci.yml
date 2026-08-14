@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y libpcre2-dev libffi-dev
+
+      - name: Checkout coil-lang
+        uses: actions/checkout@v4
+        with:
+          repository: ardax-corp/coil-lang
+          path: coil-lang
+
+      - name: Build coil
+        run: cargo build --bin coil
+        working-directory: coil-lang
+
+      - name: Build native
+        run: make -C native
+
+      - name: Test
+        run: ../coil-lang/target/debug/coil test
+        env:
+          PATH: ${{ github.workspace }}/coil-lang/target/debug:${{ env.PATH }}
