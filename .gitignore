@@ -4,4 +4,5 @@
 *.dll
 *.hyc
 smoke
+smoke.bin
 target/

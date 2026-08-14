@@ -12,10 +12,11 @@ roots = ["./src", "../coil-regex/src"]
 search_paths = ["../coil-regex/native"]
 ```
 
-Build the native library once:
+Build the native library once (from the package root):
 
 ```bash
-make -C ../coil-regex/native
+make
+# or: make -C native
 ```
 
 Then in coil source:

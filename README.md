@@ -11,8 +11,15 @@ Userland PCRE2 regex for [coil](https://github.com/ardax-corp/coil-lang). Replac
 ## Quick start
 
 ```bash
+make          # native/libregex.{so,dylib,dll}
+make smoke    # C ABI smoke (optional)
+make test     # coil language harness (needs coil on PATH)
+```
+
+Or build only the native tree:
+
+```bash
 make -C native
-coil test
 ```
 
 Run the demo:
