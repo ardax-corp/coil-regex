@@ -6,7 +6,7 @@ Spool will own Coil-to-Coil deps once a public CLI can resolve git tags ([COI-21
 
 ## Sibling checkout
 
-Clone this repo next to your project. In the consumer `coil.toml`:
+This is the working path. Clone this repo next to your project. In the consumer `coil.toml`:
 
 ```toml
 [module]
@@ -37,9 +37,24 @@ let re = compile("(\\w+)=(\\d+)", "i")?;
 
 Function list, flags, and errors are in [api.md](api.md).
 
-## coil.lock until spool exists
+## Git dep and coil.lock
 
-This repo has no git tags. There is no public `spool` CLI. Pin Coil-to-Coil in `coil.lock` with `rev` and `content_hash`. Omit `tag`. `coil.toml` git tables need a `version` field, which cannot resolve until tags exist, so leave git deps out of the consumer manifest.
+A git dep in `coil.toml` still needs `{ git, version }` or coil reports E0900. `version` is a parser field so the manifest parses. It is not a git tag. Git-only `{ git }` is [COI-220](https://linear.app/ardax/issue/COI-220).
+
+Parseable example:
+
+```toml
+[dependencies]
+regex = { git = "https://github.com/ardax-corp/coil-regex.git", version = "^0.1" }
+
+[module]
+roots = ["./src", "./.spool/deps/regex/src"]
+
+[ffi]
+search_paths = ["./.spool/deps/regex/native"]
+```
+
+There is no public `spool` CLI. This repo has no tags until [COI-219](https://linear.app/ardax/issue/COI-219). The pin is `coil.lock` `rev` + `content_hash`. Omit `tag`. Use sibling checkout until spool materializes `.spool/deps`.
 
 `coil.lock`:
 
@@ -59,17 +74,7 @@ git rev-parse HEAD
 git rev-parse 'HEAD^{tree}'
 ```
 
-The compiler does not read `coil.lock`. Check out that `rev` and point `[module] roots` at its `src/`, same as sibling checkout. A vendor tree at `./.spool/deps/regex` matches the later spool layout:
-
-```toml
-[module]
-roots = ["./src", "./.spool/deps/regex/src"]
-
-[ffi]
-search_paths = ["./.spool/deps/regex/native"]
-```
-
-Build `libregex` in that checkout. Spool does not fetch native artifacts yet ([COI-60](https://linear.app/ardax/issue/COI-60)).
+The compiler does not read `coil.lock`. Check out that `rev` and point `[module] roots` at its `src/`. Native libs stay on `[ffi] search_paths` until [COI-60](https://linear.app/ardax/issue/COI-60).
 
 ## Lifecycle
 
