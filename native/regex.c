@@ -261,10 +261,9 @@ char *coil_regex_capture_named(int64_t handle, const char *name) {
     if (!re || !name) {
         return NULL;
     }
-    PCRE2_UCHAR *buf = NULL;
-    PCRE2_SIZE len = 0;
-    int rc = pcre2_substring_get_byname(re->match_data, (PCRE2_SPTR)name, &buf, &len);
-    if (rc == PCRE2_ERROR_NOSUBSTRING || rc == PCRE2_ERROR_NOUNIQUESUBSTRING) {
+    // Copy via last_subject; get_byname would dangle after find returns.
+    int n = pcre2_substring_number_from_name(re->code, (PCRE2_SPTR)name);
+    if (n == PCRE2_ERROR_NOSUBSTRING || n == PCRE2_ERROR_NOUNIQUESUBSTRING) {
         char *empty = (char *)malloc(1);
         if (!empty) {
             return NULL;
@@ -272,18 +271,10 @@ char *coil_regex_capture_named(int64_t handle, const char *name) {
         empty[0] = '\0';
         return empty;
     }
-    if (rc < 0) {
+    if (n < 0) {
         return NULL;
     }
-    char *out = (char *)malloc(len + 1);
-    if (!out) {
-        pcre2_substring_free(buf);
-        return NULL;
-    }
-    memcpy(out, buf, len);
-    out[len] = '\0';
-    pcre2_substring_free(buf);
-    return out;
+    return copy_substring(re, (uint32_t)n);
 }
 
 int64_t coil_regex_span_start(int64_t packed) {
