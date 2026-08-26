@@ -30,4 +30,4 @@ coil test
 ## See also
 
 - [api.md](api.md) — function reference
-- [consume.md](consume.md). Sibling checkout, `coil.lock` `rev` + `content_hash`, `[ffi] search_paths`
+- [consume.md](consume.md). Sibling checkout, `{ git }`, `coil.lock` `rev` + `content_hash`, `[ffi] search_paths`
