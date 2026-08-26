@@ -2,7 +2,7 @@
 
 Package name is `regex`. Put this package's `src/` on `[module] roots` and `use regex::{…}` resolves here. `extern "regex"` in `src/regex.hy` already loads the native library with `dload("regex")`. Application code does not call `dload`.
 
-Spool will own Coil-to-Coil deps once a public CLI can resolve git tags ([COI-219](https://linear.app/ardax/issue/COI-219)). Native `.so` / `.dylib` / `.dll` stay on `[ffi] search_paths` until [COI-60](https://linear.app/ardax/issue/COI-60).
+Spool will own Coil-to-Coil deps once a public CLI can resolve git tags ([COI-219](https://linear.app/ardax/issue/COI-219)). Until then `{ git }` parses and the pin is `coil.lock`. Native `.so` / `.dylib` / `.dll` stay on `[ffi] search_paths` until [COI-60](https://linear.app/ardax/issue/COI-60).
 
 ## Sibling checkout
 
@@ -39,13 +39,13 @@ Function list, flags, and errors are in [api.md](api.md).
 
 ## Git dep and coil.lock
 
-A git dep in `coil.toml` still needs `{ git, version }` or coil reports E0900. `version` is a parser field so the manifest parses. It is not a git tag. Git-only `{ git }` is [COI-220](https://linear.app/ardax/issue/COI-220).
+`{ git }` is the parseable form. `version` and `rev` are optional schema, stored only. They are not a resolved tag. Do not run `spool add`. There is no public spool CLI.
 
 Parseable example:
 
 ```toml
 [dependencies]
-regex = { git = "https://github.com/ardax-corp/coil-regex.git", version = "^0.1" }
+regex = { git = "https://github.com/ardax-corp/coil-regex.git" }
 
 [module]
 roots = ["./src", "./.spool/deps/regex/src"]
@@ -54,7 +54,7 @@ roots = ["./src", "./.spool/deps/regex/src"]
 search_paths = ["./.spool/deps/regex/native"]
 ```
 
-There is no public `spool` CLI. This repo has no tags until [COI-219](https://linear.app/ardax/issue/COI-219). The pin is `coil.lock` `rev` + `content_hash`. Omit `tag`. Use sibling checkout until spool materializes `.spool/deps`.
+This repo has no tags until [COI-219](https://linear.app/ardax/issue/COI-219). The pin is `coil.lock` `rev` + `content_hash`. Omit `tag`. Use sibling checkout until spool materializes `.spool/deps`.
 
 `coil.lock`:
 
