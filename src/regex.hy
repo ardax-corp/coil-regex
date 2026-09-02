@@ -134,27 +134,15 @@ fn captures_all_from(int handle, string subject, int offset, Vec<Vec<string>> ro
     return captures_all_from(handle, subject, advance_offset(end, start), rows)?;
 }
 
-fn split(Regex re, string subject) -> Result<Vec<string>, RegexError> {
-    let parts: Vec<string> = Vec::new();
-    let offset = 0;
-    let n = len(to_bytes(subject));
-    while true {
-        let packed = coil_regex_next_match(re.handle, subject, offset);
-        if packed == -3 {
-            parts.push(slice_bytes(subject, offset, n)?);
-            return parts;
-        }
-        if packed < 0 {
-            raise err_from_code(packed);
-        }
-        let start = coil_regex_span_start(packed);
-        let end = coil_regex_span_end(packed);
-        parts.push(slice_bytes(subject, offset, start)?);
-        offset = advance_offset(end, start);
+fn compile(string pattern, string flags) -> Result<Regex, RegexError> {
+    let h = coil_regex_compile(pattern, flags);
+    if h == 0 {
+        raise RegexError::Compile;
     }
+    return new Regex(h);
 }
 
-fn expand_replacement(Regex re, string template) -> Result<string, RegexError> {
+fn expand_replacement(int handle, string template) -> Result<string, RegexError> {
     let bytes = to_bytes(template);
     let out: Vec<byte> = Vec::new();
     let i = 0;
@@ -178,7 +166,10 @@ fn expand_replacement(Regex re, string template) -> Result<string, RegexError> {
         if bytes[i] == (123 as byte) {
             i = i + 1;
             let start = i;
-            while i < n && bytes[i] != (125 as byte) {
+            while i < n {
+                if bytes[i] == (125 as byte) {
+                    break;
+                }
                 i = i + 1;
             }
             if i >= n {
@@ -186,7 +177,7 @@ fn expand_replacement(Regex re, string template) -> Result<string, RegexError> {
             }
             let name = slice_bytes(template, start, i)?;
             i = i + 1;
-            let cap = coil_regex_capture_named(re.handle, name);
+            let cap = coil_regex_capture_named(handle, name);
             let cap_bytes = to_bytes(cap);
             let j = 0;
             while j < len(cap_bytes) {
@@ -197,11 +188,14 @@ fn expand_replacement(Regex re, string template) -> Result<string, RegexError> {
         }
         if bytes[i] >= (48 as byte) && bytes[i] <= (57 as byte) {
             let start = i;
-            while i < n && bytes[i] >= (48 as byte) && bytes[i] <= (57 as byte) {
+            while i < n {
+                if bytes[i] < (48 as byte) || bytes[i] > (57 as byte) {
+                    break;
+                }
                 i = i + 1;
             }
             let idx = parse_usize(slice_bytes(template, start, i)?);
-            let cap = coil_regex_capture_at(re.handle, idx);
+            let cap = coil_regex_capture_at(handle, idx);
             let cap_bytes = to_bytes(cap);
             let j = 0;
             while j < len(cap_bytes) {
@@ -221,8 +215,8 @@ fn expand_replacement(Regex re, string template) -> Result<string, RegexError> {
 }
 
 #[max_depth(4096)]
-fn replace_all_from(Regex re, string subject, string template, int pos, string out, bool replaced) -> Result<string, RegexError> {
-    let packed = coil_regex_next_match(re.handle, subject, pos);
+fn replace_all_from(int handle, string subject, string template, int pos, string out, bool replaced) -> Result<string, RegexError> {
+    let packed = coil_regex_next_match(handle, subject, pos);
     if packed == -3 {
         let tail = slice_bytes(subject, pos, len(to_bytes(subject)))?;
         if !replaced {
@@ -236,16 +230,8 @@ fn replace_all_from(Regex re, string subject, string template, int pos, string o
     let start = coil_regex_span_start(packed);
     let end = coil_regex_span_end(packed);
     let head = slice_bytes(subject, pos, start)?;
-    let piece = expand_replacement(re, template)?;
-    return replace_all_from(re, subject, template, advance_offset(end, start), out + head + piece, true)?;
-}
-
-fn compile(string pattern, string flags) -> Result<Regex, RegexError> {
-    let h = coil_regex_compile(pattern, flags);
-    if h == 0 {
-        raise RegexError::Compile;
-    }
-    return new Regex(h);
+    let piece = expand_replacement(handle, template)?;
+    return replace_all_from(handle, subject, template, advance_offset(end, start), out + head + piece, true)?;
 }
 
 impl Regex {
@@ -255,56 +241,108 @@ impl Regex {
             self.handle = 0;
         }
     }
+
+    pub fn split(string subject) -> Result<Vec<string>, RegexError> {
+        let parts: Vec<string> = Vec::new();
+        let offset = 0;
+        let n = len(to_bytes(subject));
+        while true {
+            let packed = coil_regex_next_match(self.handle, subject, offset);
+            if packed == -3 {
+                parts.push(slice_bytes(subject, offset, n)?);
+                return parts;
+            }
+            if packed < 0 {
+                raise err_from_code(packed);
+            }
+            let start = coil_regex_span_start(packed);
+            let end = coil_regex_span_end(packed);
+            parts.push(slice_bytes(subject, offset, start)?);
+            offset = advance_offset(end, start);
+        }
+    }
+
+    pub fn is_match(string subject) -> Result<bool, RegexError> {
+        let rc = coil_regex_is_match(self.handle, subject);
+        if rc < 0 {
+            raise err_from_code(rc);
+        }
+        return rc != 0;
+    }
+
+    pub fn find(string subject) -> Result<(int, int), RegexError> {
+        let packed = coil_regex_find(self.handle, subject);
+        if packed < 0 {
+            raise err_from_code(packed);
+        }
+        return (coil_regex_span_start(packed), coil_regex_span_end(packed));
+    }
+
+    pub fn find_all(string subject) -> Result<Vec<(int, int)>, RegexError> {
+        return find_all_from(self.handle, subject, 0, Vec::new())?;
+    }
+
+    pub fn captures(string subject) -> Result<Vec<string>, RegexError> {
+        let packed = coil_regex_find(self.handle, subject);
+        if packed < 0 {
+            raise err_from_code(packed);
+        }
+        return capture_row(self.handle)?;
+    }
+
+    pub fn captures_all(string subject) -> Result<Vec<Vec<string>>, RegexError> {
+        return captures_all_from(self.handle, subject, 0, Vec::new())?;
+    }
+
+    pub fn replace(string subject, string template) -> Result<string, RegexError> {
+        let packed = coil_regex_find(self.handle, subject);
+        if packed == -3 {
+            return subject;
+        }
+        if packed < 0 {
+            raise err_from_code(packed);
+        }
+        let start = coil_regex_span_start(packed);
+        let end = coil_regex_span_end(packed);
+        let head = slice_bytes(subject, 0, start)?;
+        let tail = slice_bytes(subject, end, len(to_bytes(subject)))?;
+        let piece = expand_replacement(self.handle, template)?;
+        return head + piece + tail;
+    }
+
+    pub fn replace_all(string subject, string template) -> Result<string, RegexError> {
+        return replace_all_from(self.handle, subject, template, 0, "", false)?;
+    }
+}
+
+fn split(Regex re, string subject) -> Result<Vec<string>, RegexError> {
+    return re.split(subject)?;
 }
 
 fn is_match(Regex re, string subject) -> Result<bool, RegexError> {
-    let rc = coil_regex_is_match(re.handle, subject);
-    if rc < 0 {
-        raise err_from_code(rc);
-    }
-    return rc != 0;
+    return re.is_match(subject)?;
 }
 
 fn find(Regex re, string subject) -> Result<(int, int), RegexError> {
-    let packed = coil_regex_find(re.handle, subject);
-    if packed < 0 {
-        raise err_from_code(packed);
-    }
-    return (coil_regex_span_start(packed), coil_regex_span_end(packed));
+    return re.find(subject)?;
 }
 
 fn find_all(Regex re, string subject) -> Result<Vec<(int, int)>, RegexError> {
-    return find_all_from(re.handle, subject, 0, Vec::new())?;
+    return re.find_all(subject)?;
 }
 
 fn captures(Regex re, string subject) -> Result<Vec<string>, RegexError> {
-    let packed = coil_regex_find(re.handle, subject);
-    if packed < 0 {
-        raise err_from_code(packed);
-    }
-    return capture_row(re.handle)?;
+    return re.captures(subject)?;
 }
 
 fn captures_all(Regex re, string subject) -> Result<Vec<Vec<string>>, RegexError> {
-    return captures_all_from(re.handle, subject, 0, Vec::new())?;
+    return re.captures_all(subject)?;
 }
 
 fn replace(Regex re, string subject, string template) -> Result<string, RegexError> {
-    let packed = coil_regex_find(re.handle, subject);
-    if packed == -3 {
-        return subject;
-    }
-    if packed < 0 {
-        raise err_from_code(packed);
-    }
-    let start = coil_regex_span_start(packed);
-    let end = coil_regex_span_end(packed);
-    let head = slice_bytes(subject, 0, start)?;
-    let tail = slice_bytes(subject, end, len(to_bytes(subject)))?;
-    let piece = expand_replacement(re, template)?;
-    return head + piece + tail;
+    return re.replace(subject, template)?;
 }
 
 fn replace_all(Regex re, string subject, string template) -> Result<string, RegexError> {
-    return replace_all_from(re, subject, template, 0, "", false)?;
+    return re.replace_all(subject, template)?;
 }

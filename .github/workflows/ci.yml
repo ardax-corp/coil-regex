@@ -98,6 +98,6 @@ jobs:
         run: make
 
       - name: Test
-        run: ./coil-lang/target/debug/coil test
+        run: make test
         env:
-          PATH: ${{ github.workspace }}/coil-lang/target/debug:${{ env.PATH }}
+          COIL: ${{ github.workspace }}/coil-lang/target/debug/coil

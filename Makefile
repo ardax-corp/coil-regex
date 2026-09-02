@@ -18,8 +18,15 @@ native:
 smoke: native
 	$(MAKE) -C native smoke
 
+# Host grant is CLI-only. Runtime dload still needs a native sha256 pin.
 test: native
-	$(COIL) test
+	@lib=native/libregex.so; \
+	  if [ -f native/libregex.dylib ]; then lib=native/libregex.dylib; fi; \
+	  if [ -f native/libregex.dll ]; then lib=native/libregex.dll; fi; \
+	  if command -v sha256sum >/dev/null 2>&1; then hash=$$(sha256sum "$$lib" | awk '{print $$1}'); \
+	  else hash=$$(shasum -a 256 "$$lib" | awk '{print $$1}'); fi; \
+	  printf '%s\n' '[[package]]' "name = 'regex'" '[[package.native]]' "sha256 = '$$hash'" > coil.lock
+	$(COIL) test --allow-dload regex --ffi-search-path native
 
 clean:
 	$(MAKE) -C native clean
