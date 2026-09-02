@@ -12,7 +12,7 @@ fn expect_compile(Result r) {
         Result::Ok(_) => panic "expected Err",
         Result::Err(e) => match e {
             RegexError::Compile => {},
-            _ => panic "expected Compile",
+            default => panic "expected Compile",
         },
     };
 }
@@ -22,7 +22,7 @@ fn expect_nomatch(Result r) {
         Result::Ok(_) => panic "expected Err",
         Result::Err(e) => match e {
             RegexError::NoMatch => {},
-            _ => panic "expected NoMatch",
+            default => panic "expected NoMatch",
         },
     };
 }
@@ -32,7 +32,7 @@ fn expect_runtime(Result r) {
         Result::Ok(_) => panic "expected Err",
         Result::Err(e) => match e {
             RegexError::Runtime => {},
-            _ => panic "expected Runtime",
+            default => panic "expected Runtime",
         },
     };
 }
@@ -42,7 +42,7 @@ fn expect_utf8(Result r) {
         Result::Ok(_) => panic "expected Err",
         Result::Err(e) => match e {
             RegexError::Utf8 => {},
-            _ => panic "expected Utf8",
+            default => panic "expected Utf8",
         },
     };
 }

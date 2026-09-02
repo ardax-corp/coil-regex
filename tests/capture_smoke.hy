@@ -23,7 +23,7 @@ test("captures no match is NoMatch") {
         Result::Ok(_) => panic "expected Err",
         Result::Err(e) => match e {
             RegexError::NoMatch => {},
-            _ => panic "expected NoMatch",
+            default => panic "expected NoMatch",
         },
     };
 }
