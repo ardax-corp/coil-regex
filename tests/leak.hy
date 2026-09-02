@@ -1,5 +1,5 @@
 use gc::{collect, heap_bytes};
-use regex::{compile};
+use regex::{RegexError, compile, is_match};
 
 fn compile_batch(int n) {
     let i = 0;
@@ -12,15 +12,27 @@ fn compile_batch(int n) {
     }
 }
 
-test("Regex.drop zeros handle") {
+test("Regex.drop then is_match is Runtime") {
     let re = match compile("a+", "") {
         Result::Ok(v) => v,
         Result::Err(_) => panic "compile",
     };
     re.drop();
-    assert(re.handle == 0)?;
+    match is_match(re, "aaa") {
+        Result::Ok(_) => panic "expected Err after drop",
+        Result::Err(e) => match e {
+            RegexError::Runtime => {},
+            default => panic "expected Runtime",
+        },
+    };
     re.drop();
-    assert(re.handle == 0)?;
+    match is_match(re, "aaa") {
+        Result::Ok(_) => panic "expected Err after drop",
+        Result::Err(e) => match e {
+            RegexError::Runtime => {},
+            default => panic "expected Runtime",
+        },
+    };
 }
 
 test("compile and drop does not grow heap across collect") {
