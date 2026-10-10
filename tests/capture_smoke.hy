@@ -85,6 +85,19 @@ test("captures longer than one word and multi-byte UTF-8") {
     assert(row[1] == "héllo wörld, a long capture")?;
 }
 
+test("capture longer than the first-try buffer") {
+    let re = match compile("\\[(.*)\\]", "") {
+        Result::Ok(v) => v,
+        Result::Err(_) => panic "compile",
+    };
+    let long = "0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij-é-tail";
+    let row = match captures(re, "[" + long + "]") {
+        Result::Ok(v) => v,
+        Result::Err(_) => panic "captures",
+    };
+    assert(row[1] == long)?;
+}
+
 test("unset optional group is empty") {
     let re = match compile("(a)?(b)", "") {
         Result::Ok(v) => v,
