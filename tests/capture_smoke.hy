@@ -72,3 +72,40 @@ test("replace_all substitution") {
     };
     assert(out == "a->1")?;
 }
+
+test("captures longer than one word and multi-byte UTF-8") {
+    let re = match compile("<(.+)>", "") {
+        Result::Ok(v) => v,
+        Result::Err(_) => panic "compile",
+    };
+    let row = match captures(re, "x<héllo wörld, a long capture>y") {
+        Result::Ok(v) => v,
+        Result::Err(_) => panic "captures",
+    };
+    assert(row[1] == "héllo wörld, a long capture")?;
+}
+
+test("unset optional group is empty") {
+    let re = match compile("(a)?(b)", "") {
+        Result::Ok(v) => v,
+        Result::Err(_) => panic "compile",
+    };
+    let row = match captures(re, "b") {
+        Result::Ok(v) => v,
+        Result::Err(_) => panic "captures",
+    };
+    assert(row[1] == "")?;
+    assert(row[2] == "b")?;
+}
+
+test("replace_all named group") {
+    let re = match compile("(?<k>\\w+)=(?<v>\\d+)", "") {
+        Result::Ok(v) => v,
+        Result::Err(_) => panic "compile",
+    };
+    let out = match replace_all(re, "a=1 bb=22", "${v}:${k}") {
+        Result::Ok(v) => v,
+        Result::Err(_) => panic "replace_all",
+    };
+    assert(out == "1:a 22:bb")?;
+}

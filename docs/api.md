@@ -7,7 +7,7 @@ Module: `use regex::{…};` (package name `regex` from `coil.toml`).
 ```coil
 enum RegexError { Compile, Runtime, NoMatch, Utf8 }
 
-class Regex { code: int, match_data: int, count: int }
+class Regex { pcre2: Pcre2, code: int, match_data: int, count: int }
 ```
 
 `code` and `match_data` are PCRE2 pointers cast to `int`. A `Regex` keeps its last match, so it is **not** thread-sendable; use one `Regex` per thread.

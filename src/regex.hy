@@ -1,41 +1,49 @@
 // Userland PCRE2 regex: binds libpcre2-8 directly (no C shim) and keeps the
 // free-function API of the former virtual module.
 
+use ffi::{declare, dload, invoke};
+use ffi::types::{Int, Ptr, String};
 use string::{from_bytes, to_bytes};
 
-// PCRE2's 8-bit symbols. `pcre2.h` maps `pcre2_compile` to `pcre2_compile_8`
-// with macros, so the real names carry the code-unit suffix.
+// libpcre2-8's 8-bit symbols. `pcre2.h` maps `pcre2_compile` to
+// `pcre2_compile_8` with macros, so the real names carry the code-unit
+// suffix. C `int` / `uint32_t` travel as `int`: arguments only use the low
+// 32 bits, and results go through `c_int`.
 extern "libpcre2-8.so.0" {
-    fn pcre2_compile_8(string pattern, int length, uint32 options, [int; 1] errorcode, [int; 1] erroroffset, int ccontext) -> int;
     fn pcre2_code_free_8(int code);
     fn pcre2_match_data_create_from_pattern_8(int code, int gcontext) -> int;
     fn pcre2_match_data_free_8(int match_data);
-    fn pcre2_match_8(int code, string subject, int length, int start_offset, uint32 options, int match_data, int mcontext) -> int32;
+    fn pcre2_match_8(int code, string subject, int length, int start_offset, int options, int match_data, int mcontext) -> int;
     fn pcre2_get_startchar_8(int match_data) -> int;
-    fn pcre2_substring_length_bynumber_8(int match_data, uint32 number, [int; 1] length) -> int32;
-    fn pcre2_substring_copy_bynumber_8(int match_data, uint32 number, ptr buffer, [int; 1] bufflen) -> int32;
-    fn pcre2_substring_number_from_name_8(int code, string name) -> int32;
+    fn pcre2_substring_number_from_name_8(int code, string name) -> int;
+}
+
+// `PCRE2_ZERO_TERMINATED`: `~(PCRE2_SIZE)0`.
+static const ZERO_TERMINATED = -1;
+
+static const PCRE2_CASELESS = 8;
+static const PCRE2_DOTALL = 32;
+static const PCRE2_EXTENDED = 128;
+static const PCRE2_MULTILINE = 1024;
+static const PCRE2_UCP = 131072;
+static const PCRE2_UTF = 524288;
+// The match data keeps its own copy of the subject. coil frees the C string
+// it passes once the call returns, so without this the substring calls
+// would read freed memory.
+static const PCRE2_COPY_MATCHED_SUBJECT = 16384;
+
+static const PCRE2_ERROR_NOMATCH = -1;
+
+/// Sign-extend a C `int` result from the low 32 bits of the return register.
+fn c_int(int raw) -> int {
+    let low = raw & 4294967295;
+    if low >= 2147483648 {
+        return low - 4294967296;
+    }
+    return low;
 }
 
 // Unsuffixed wrappers, so callers don't depend on the code-unit width.
-
-// `PCRE2_ZERO_TERMINATED`: `~(PCRE2_SIZE)0`.
-const ZERO_TERMINATED: int = -1;
-
-const PCRE2_CASELESS: int = 8;
-const PCRE2_DOTALL: int = 32;
-const PCRE2_EXTENDED: int = 128;
-const PCRE2_MULTILINE: int = 1024;
-const PCRE2_UCP: int = 131072;
-const PCRE2_UTF: int = 524288;
-
-const PCRE2_ERROR_NOMATCH: int = -1;
-
-fn pcre2_compile(string pattern, int options) -> int {
-    let errorcode = [0];
-    let erroroffset = [0];
-    return pcre2_compile_8(pattern, ZERO_TERMINATED, options as uint32, errorcode, erroroffset, 0);
-}
 
 fn pcre2_code_free(int code) {
     pcre2_code_free_8(code);
@@ -50,45 +58,102 @@ fn pcre2_match_data_free(int match_data) {
 }
 
 fn pcre2_match(int code, string subject, int start_offset, int match_data) -> int {
-    return pcre2_match_8(code, subject, ZERO_TERMINATED, start_offset, 0 as uint32, match_data, 0) as int;
+    let rc = pcre2_match_8(code, subject, ZERO_TERMINATED, start_offset, PCRE2_COPY_MATCHED_SUBJECT, match_data, 0);
+    return c_int(rc);
 }
 
 fn pcre2_get_startchar(int match_data) -> int {
     return pcre2_get_startchar_8(match_data);
 }
 
-/// Byte length of group `number`, or a negative PCRE2 error (unset, …).
-fn pcre2_substring_length_bynumber(int match_data, int number) -> int {
-    let length = [0];
-    let rc = pcre2_substring_length_bynumber_8(match_data, number as uint32, length) as int;
-    if rc < 0 {
-        return rc;
-    }
-    return length[0];
-}
-
-/// Bytes of group `number` (`length` from the call above). The buffer is a
-/// word array, so the copied bytes come back packed little-endian.
-fn pcre2_substring_copy_bynumber(int match_data, int number, int length) -> Result<Vec<byte>, RegexError> {
-    let words: Vec<int> = Vec::new();
-    let nwords = length / 8 + 1;
-    for _ in 0..nwords {
-        words.push(0);
-    }
-    let bufflen = [nwords * 8];
-    let rc = pcre2_substring_copy_bynumber_8(match_data, number as uint32, words, bufflen) as int;
-    if rc < 0 {
-        raise RegexError::Runtime;
-    }
-    let out: Vec<byte> = Vec::new();
-    for i in 0..length {
-        out.push(((words[i / 8] >> ((i % 8) * 8)) & 255) as byte);
-    }
-    return out;
-}
-
 fn pcre2_substring_number_from_name(int code, string name) -> int {
-    return pcre2_substring_number_from_name_8(code, name) as int;
+    return c_int(pcre2_substring_number_from_name_8(code, name));
+}
+
+/// The PCRE2 calls that write through out-parameters. `extern` blocks can't
+/// declare those, so they go through `declare` / `invoke`, where an int
+/// array argument is copied back after the call.
+class Pcre2 {
+    lib: int,
+    compile_id: int,
+    length_id: int,
+    copy_id: int,
+}
+
+fn ffi_ok(Result r) -> Result<int, RegexError> {
+    return match r {
+        Result::Ok(v) => v,
+        Result::Err(_) => raise RegexError::Runtime,
+    };
+}
+
+// One dload per process: every `Regex` shares these ids.
+static let pcre2_lib = 0;
+static let pcre2_compile_id = 0;
+static let pcre2_length_id = 0;
+static let pcre2_copy_id = 0;
+
+fn pcre2_open() -> Result<Pcre2, RegexError> {
+    if pcre2_lib == 0 {
+        let lib = ffi_ok(dload("libpcre2-8.so.0"))?;
+        pcre2_compile_id = ffi_ok(declare(lib, "pcre2_compile_8", (String, Int, Int, Ptr, Ptr, Int), Int))?;
+        pcre2_length_id = ffi_ok(declare(lib, "pcre2_substring_length_bynumber_8", (Int, Int, Ptr), Int))?;
+        pcre2_copy_id = ffi_ok(declare(lib, "pcre2_substring_copy_bynumber_8", (Int, Int, Ptr, Ptr), Int))?;
+        pcre2_lib = lib;
+    }
+    return new Pcre2(pcre2_lib, pcre2_compile_id, pcre2_length_id, pcre2_copy_id);
+}
+
+/// A one-word out-parameter. Never empty: an empty array would be passed as
+/// a raw pointer instead of a copied buffer.
+fn out_word(int initial) -> Vec<int> {
+    let v: Vec<int> = Vec::new();
+    v.push(initial);
+    return v;
+}
+
+impl Pcre2 {
+    /// Compiled pattern, or 0 when it does not compile.
+    pub fn compile(string pattern, int options) -> Result<int, RegexError> {
+        let errorcode = out_word(0);
+        let erroroffset = out_word(0);
+        // A bare global in an `invoke` tuple reads as a callback; pass a local.
+        let length = ZERO_TERMINATED;
+        return ffi_ok(invoke(self.lib, self.compile_id, (pattern, length, options, errorcode, erroroffset, 0)))?;
+    }
+
+    /// Byte length of group `number`, or a negative PCRE2 error (unset, …).
+    pub fn substring_length(int match_data, int number) -> Result<int, RegexError> {
+        let length = out_word(0);
+        let rc = c_int(ffi_ok(invoke(self.lib, self.length_id, (match_data, number, length)))?);
+        if rc < 0 {
+            return rc;
+        }
+        return length[0];
+    }
+
+    /// The `length` bytes of group `number`. The buffer is a word array, so
+    /// the bytes come back packed little-endian, eight per word.
+    pub fn substring_copy(int match_data, int number, int length) -> Result<Vec<byte>, RegexError> {
+        let nwords = length / 8 + 1;
+        let words: Vec<int> = Vec::new();
+        for _ in 0..nwords {
+            words.push(0);
+        }
+        let bufflen = out_word(nwords * 8);
+        let rc = c_int(ffi_ok(invoke(self.lib, self.copy_id, (match_data, number, words, bufflen)))?);
+        if rc < 0 {
+            raise RegexError::Runtime;
+        }
+        let out: Vec<byte> = Vec::new();
+        for i in 0..length {
+            let word = words[i / 8];
+            let shift = (i % 8) * 8;
+            let b: int = (word >> shift) & 255;
+            out.push(b as byte);
+        }
+        return out;
+    }
 }
 
 enum RegexError {
@@ -99,6 +164,7 @@ enum RegexError {
 }
 
 class Regex {
+    pcre2: Pcre2,
     code: int,
     match_data: int,
     // Groups set by the last successful match (PCRE2's match return).
@@ -186,7 +252,8 @@ fn compile(string pattern, string flags) -> Result<Regex, RegexError> {
     if opts == 0 {
         raise RegexError::Compile;
     }
-    let code = pcre2_compile(pattern, opts);
+    let pcre2 = pcre2_open()?;
+    let code = pcre2.compile(pattern, opts)?;
     if code == 0 {
         raise RegexError::Compile;
     }
@@ -195,53 +262,53 @@ fn compile(string pattern, string flags) -> Result<Regex, RegexError> {
         pcre2_code_free(code);
         raise RegexError::Runtime;
     }
-    return new Regex(code, match_data, 0);
-}
-
-#[max_depth(4096)]
-fn capture_row_from(Regex re, int i, Vec<string> row) -> Result<Vec<string>, RegexError> {
-    if i >= re.count {
-        return row;
-    }
-    row.push(re.capture_at(i)?);
-    return capture_row_from(re, i + 1, row)?;
-}
-
-#[max_depth(4096)]
-fn find_all_from(Regex re, string subject, int offset, Vec<(int, int)> spans) -> Result<Vec<(int, int)>, RegexError> {
-    if !re.next_match(subject, offset)? {
-        return spans;
-    }
-    let (start, end) = re.span()?;
-    spans.push((start, end));
-    return find_all_from(re, subject, advance_offset(end, start), spans)?;
-}
-
-#[max_depth(4096)]
-fn captures_all_from(Regex re, string subject, int offset, Vec<Vec<string>> rows) -> Result<Vec<Vec<string>>, RegexError> {
-    if !re.next_match(subject, offset)? {
-        return rows;
-    }
-    let (start, end) = re.span()?;
-    rows.push(re.capture_row()?);
-    return captures_all_from(re, subject, advance_offset(end, start), rows)?;
-}
-
-#[max_depth(4096)]
-fn replace_all_from(Regex re, string subject, string template, int pos, string out, bool replaced) -> Result<string, RegexError> {
-    if !re.next_match(subject, pos)? {
-        if !replaced {
-            return subject;
-        }
-        return out + slice_bytes(subject, pos, len(to_bytes(subject)))?;
-    }
-    let (start, end) = re.span()?;
-    let head = slice_bytes(subject, pos, start)?;
-    let piece = re.expand_replacement(template)?;
-    return replace_all_from(re, subject, template, advance_offset(end, start), out + head + piece, true)?;
+    return new Regex(pcre2, code, match_data, 0);
 }
 
 impl Regex {
+    #[max_depth(4096)]
+    fn capture_row_from(int i, Vec<string> row) -> Result<Vec<string>, RegexError> {
+        if i >= self.count {
+            return row;
+        }
+        row.push(self.capture_at(i)?);
+        return self.capture_row_from(i + 1, row)?;
+    }
+
+    #[max_depth(4096)]
+    fn find_all_from(string subject, int offset, Vec<(int, int)> spans) -> Result<Vec<(int, int)>, RegexError> {
+        if !self.next_match(subject, offset)? {
+            return spans;
+        }
+        let (start, end) = self.span()?;
+        spans.push((start, end));
+        return self.find_all_from(subject, advance_offset(end, start), spans)?;
+    }
+
+    #[max_depth(4096)]
+    fn captures_all_from(string subject, int offset, Vec<Vec<string>> rows) -> Result<Vec<Vec<string>>, RegexError> {
+        if !self.next_match(subject, offset)? {
+            return rows;
+        }
+        let (start, end) = self.span()?;
+        rows.push(self.capture_row()?);
+        return self.captures_all_from(subject, advance_offset(end, start), rows)?;
+    }
+
+    #[max_depth(4096)]
+    fn replace_all_from(string subject, string template, int pos, string out, bool replaced) -> Result<string, RegexError> {
+        if !self.next_match(subject, pos)? {
+            if !replaced {
+                return subject;
+            }
+            return out + slice_bytes(subject, pos, len(to_bytes(subject)))?;
+        }
+        let (start, end) = self.span()?;
+        let head = slice_bytes(subject, pos, start)?;
+        let piece = self.expand_replacement(template)?;
+        return self.replace_all_from(subject, template, advance_offset(end, start), out + head + piece, true)?;
+    }
+
     fn drop() {
         if self.match_data != 0 {
             pcre2_match_data_free(self.match_data);
@@ -276,7 +343,7 @@ impl Regex {
     /// a pattern using `\K` reports the span from before the `\K`.
     fn span() -> Result<(int, int), RegexError> {
         let start = pcre2_get_startchar(self.match_data);
-        let length = pcre2_substring_length_bynumber(self.match_data, 0);
+        let length = self.pcre2.substring_length(self.match_data, 0)?;
         if length < 0 {
             raise RegexError::Runtime;
         }
@@ -288,11 +355,11 @@ impl Regex {
         if index < 0 || index >= self.count {
             return "";
         }
-        let length = pcre2_substring_length_bynumber(self.match_data, index);
+        let length = self.pcre2.substring_length(self.match_data, index)?;
         if length <= 0 {
             return "";
         }
-        let bytes = pcre2_substring_copy_bynumber(self.match_data, index, length)?;
+        let bytes = self.pcre2.substring_copy(self.match_data, index, length)?;
         return match from_bytes(bytes) {
             Result::Ok(s) => s,
             Result::Err(_) => raise RegexError::Utf8,
@@ -309,7 +376,7 @@ impl Regex {
     }
 
     fn capture_row() -> Result<Vec<string>, RegexError> {
-        return capture_row_from(self, 0, Vec::new())?;
+        return self.capture_row_from(0, Vec::new())?;
     }
 
     fn expand_replacement(string template) -> Result<string, RegexError> {
@@ -399,7 +466,7 @@ impl Regex {
     }
 
     pub fn find_all(string subject) -> Result<Vec<(int, int)>, RegexError> {
-        return find_all_from(self, subject, 0, Vec::new())?;
+        return self.find_all_from(subject, 0, Vec::new())?;
     }
 
     pub fn captures(string subject) -> Result<Vec<string>, RegexError> {
@@ -410,7 +477,7 @@ impl Regex {
     }
 
     pub fn captures_all(string subject) -> Result<Vec<Vec<string>>, RegexError> {
-        return captures_all_from(self, subject, 0, Vec::new())?;
+        return self.captures_all_from(subject, 0, Vec::new())?;
     }
 
     pub fn replace(string subject, string template) -> Result<string, RegexError> {
@@ -425,7 +492,7 @@ impl Regex {
     }
 
     pub fn replace_all(string subject, string template) -> Result<string, RegexError> {
-        return replace_all_from(self, subject, template, 0, "", false)?;
+        return self.replace_all_from(subject, template, 0, "", false)?;
     }
 }
 
