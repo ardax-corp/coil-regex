@@ -3,7 +3,7 @@
 
 use ffi::{declare, dload, invoke};
 use ffi::types::{Int, Ptr, String};
-use string::{from_bytes, to_bytes};
+use string::{from_bytes, slice_bytes, to_bytes};
 
 // libpcre2-8's 8-bit symbols. `pcre2.h` maps `pcre2_compile` to
 // `pcre2_compile_8` with macros, so the real names carry the code-unit
@@ -33,6 +33,9 @@ static const PCRE2_UTF = 524288;
 static const PCRE2_COPY_MATCHED_SUBJECT = 16384;
 
 static const PCRE2_ERROR_NOMATCH = -1;
+static const PCRE2_ERROR_NOMEMORY = -48;
+// Words in the first-try buffer for a group's text (63 bytes + NUL).
+static const SMALL_GROUP_WORDS = 8;
 
 /// Sign-extend a C `int` result from the low 32 bits of the return register.
 fn c_int(int raw) -> int {
@@ -132,27 +135,28 @@ impl Pcre2 {
         return length[0];
     }
 
-    /// The `length` bytes of group `number`. The buffer is a word array, so
-    /// the bytes come back packed little-endian, eight per word.
-    pub fn substring_copy(int match_data, int number, int length) -> Result<Vec<byte>, RegexError> {
-        let nwords = length / 8 + 1;
+    /// The bytes of group `number`, or `rc` < 0 with no bytes (PCRE2's
+    /// error: unset, no such group, or a buffer of `nwords` words too small).
+    /// The buffer is a word array, so the bytes come back packed
+    /// little-endian, eight per word.
+    pub fn substring_copy(int match_data, int number, int nwords) -> Result<(int, Vec<byte>), RegexError> {
         let words: Vec<int> = Vec::new();
         for _ in 0..nwords {
             words.push(0);
         }
         let bufflen = out_word(nwords * 8);
         let rc = c_int(ffi_ok(invoke(self.lib, self.copy_id, (match_data, number, words, bufflen)))?);
-        if rc < 0 {
-            raise RegexError::Runtime;
-        }
         let out: Vec<byte> = Vec::new();
-        for i in 0..length {
+        if rc < 0 {
+            return (rc, out);
+        }
+        for i in 0..bufflen[0] {
             let word = words[i / 8];
             let shift = (i % 8) * 8;
             let b: int = (word >> shift) & 255;
             out.push(b as byte);
         }
-        return out;
+        return (rc, out);
     }
 }
 
@@ -193,13 +197,6 @@ fn parse_flags(string flags) -> int {
     return opts;
 }
 
-fn clamp_end(int end, int n) -> int {
-    if end > n {
-        return n;
-    }
-    return end;
-}
-
 fn advance_offset(int next, int start) -> int {
     if next <= start {
         return next + 1;
@@ -219,20 +216,11 @@ fn parse_usize(string digits) -> int {
     return idx;
 }
 
-fn slice_bytes(string subject, int start, int end) -> Result<string, RegexError> {
-    let bytes = to_bytes(subject);
-    let n = len(bytes);
-    if start < 0 || end < start || start > n {
+fn byte_slice(string subject, int start, int end) -> Result<string, RegexError> {
+    if start < 0 || end < start || start > len(subject) {
         raise RegexError::Runtime;
     }
-    let end_use = clamp_end(end, n);
-    let out: Vec<byte> = Vec::new();
-    let i = start;
-    while i < end_use {
-        out.push(bytes[i]);
-        i = i + 1;
-    }
-    return match from_bytes(out) {
+    return match slice_bytes(subject, start, end) {
         Result::Ok(s) => s,
         Result::Err(_) => raise RegexError::Utf8,
     };
@@ -301,10 +289,10 @@ impl Regex {
             if !replaced {
                 return subject;
             }
-            return out + slice_bytes(subject, pos, len(to_bytes(subject)))?;
+            return out + byte_slice(subject, pos, len(subject))?;
         }
         let (start, end) = self.span()?;
-        let head = slice_bytes(subject, pos, start)?;
+        let head = byte_slice(subject, pos, start)?;
         let piece = self.expand_replacement(template)?;
         return self.replace_all_from(subject, template, advance_offset(end, start), out + head + piece, true)?;
     }
@@ -325,7 +313,7 @@ impl Regex {
         if offset < 0 {
             raise RegexError::Runtime;
         }
-        if offset > len(to_bytes(subject)) {
+        if offset > len(subject) {
             return false;
         }
         let rc = pcre2_match(self.code, subject, offset, self.match_data);
@@ -355,11 +343,18 @@ impl Regex {
         if index < 0 || index >= self.count {
             return "";
         }
-        let length = self.pcre2.substring_length(self.match_data, index)?;
-        if length <= 0 {
+        // One call covers short groups; a longer one asks for its length.
+        let (rc, bytes) = self.pcre2.substring_copy(self.match_data, index, SMALL_GROUP_WORDS)?;
+        if rc == PCRE2_ERROR_NOMEMORY {
+            let length = self.pcre2.substring_length(self.match_data, index)?;
+            let (rc2, all) = self.pcre2.substring_copy(self.match_data, index, length / 8 + 1)?;
+            if rc2 < 0 {
+                raise RegexError::Runtime;
+            }
+            bytes = all;
+        } else if rc < 0 {
             return "";
         }
-        let bytes = self.pcre2.substring_copy(self.match_data, index, length)?;
         return match from_bytes(bytes) {
             Result::Ok(s) => s,
             Result::Err(_) => raise RegexError::Utf8,
@@ -412,7 +407,7 @@ impl Regex {
                 if i >= n {
                     raise RegexError::Runtime;
                 }
-                let name = slice_bytes(template, start, i)?;
+                let name = byte_slice(template, start, i)?;
                 i = i + 1;
                 push_all(out, self.capture_named(name)?);
                 continue;
@@ -425,7 +420,7 @@ impl Regex {
                     }
                     i = i + 1;
                 }
-                let idx = parse_usize(slice_bytes(template, start, i)?);
+                let idx = parse_usize(byte_slice(template, start, i)?);
                 push_all(out, self.capture_at(idx)?);
                 continue;
             }
@@ -442,14 +437,14 @@ impl Regex {
     pub fn split(string subject) -> Result<Vec<string>, RegexError> {
         let parts: Vec<string> = Vec::new();
         let offset = 0;
-        let n = len(to_bytes(subject));
+        let n = len(subject);
         while true {
             if !self.next_match(subject, offset)? {
-                parts.push(slice_bytes(subject, offset, n)?);
+                parts.push(byte_slice(subject, offset, n)?);
                 return parts;
             }
             let (start, end) = self.span()?;
-            parts.push(slice_bytes(subject, offset, start)?);
+            parts.push(byte_slice(subject, offset, start)?);
             offset = advance_offset(end, start);
         }
     }
@@ -485,8 +480,8 @@ impl Regex {
             return subject;
         }
         let (start, end) = self.span()?;
-        let head = slice_bytes(subject, 0, start)?;
-        let tail = slice_bytes(subject, end, len(to_bytes(subject)))?;
+        let head = byte_slice(subject, 0, start)?;
+        let tail = byte_slice(subject, end, len(subject))?;
         let piece = self.expand_replacement(template)?;
         return head + piece + tail;
     }
