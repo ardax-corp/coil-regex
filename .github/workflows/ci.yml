@@ -91,7 +91,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Build coil
-        run: cargo build --bin coil
+        run: cargo build --bin coil --bin coil-test
         working-directory: coil-lang
 
       - name: Build native artifact
