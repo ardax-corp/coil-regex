@@ -1,7 +1,7 @@
 // Userland PCRE2 regex: binds libpcre2-8 directly (no C shim) and keeps the
 // free-function API of the former virtual module.
 
-use ffi::{declare, dload, invoke};
+use ffi::{declare, dload, invoke, read_ints};
 use ffi::types::{Int, Ptr, String};
 use string::{from_bytes, slice_bytes, to_bytes};
 
@@ -15,6 +15,7 @@ extern "libpcre2-8.so.0" {
     fn pcre2_match_data_free_8(int match_data);
     fn pcre2_match_8(int code, string subject, int length, int start_offset, int options, int match_data, int mcontext) -> int;
     fn pcre2_get_startchar_8(int match_data) -> int;
+    fn pcre2_get_ovector_pointer_8(int match_data) -> int;
     fn pcre2_substring_number_from_name_8(int code, string name) -> int;
 }
 
@@ -27,15 +28,8 @@ static const PCRE2_EXTENDED = 128;
 static const PCRE2_MULTILINE = 1024;
 static const PCRE2_UCP = 131072;
 static const PCRE2_UTF = 524288;
-// The match data keeps its own copy of the subject. coil frees the C string
-// it passes once the call returns, so without this the substring calls
-// would read freed memory.
-static const PCRE2_COPY_MATCHED_SUBJECT = 16384;
 
 static const PCRE2_ERROR_NOMATCH = -1;
-static const PCRE2_ERROR_NOMEMORY = -48;
-// Words in the first-try buffer for a group's text (63 bytes + NUL).
-static const SMALL_GROUP_WORDS = 8;
 
 /// Sign-extend a C `int` result from the low 32 bits of the return register.
 fn c_int(int raw) -> int {
@@ -60,8 +54,10 @@ fn pcre2_match_data_free(int match_data) {
     pcre2_match_data_free_8(match_data);
 }
 
+// Captures are sliced out of the coil string by offset, so PCRE2 never reads
+// the subject after the call and needs no copy of it.
 fn pcre2_match(int code, string subject, int start_offset, int match_data) -> int {
-    let rc = pcre2_match_8(code, subject, ZERO_TERMINATED, start_offset, PCRE2_COPY_MATCHED_SUBJECT, match_data, 0);
+    let rc = pcre2_match_8(code, subject, ZERO_TERMINATED, start_offset, 0, match_data, 0);
     return c_int(rc);
 }
 
@@ -69,18 +65,20 @@ fn pcre2_get_startchar(int match_data) -> int {
     return pcre2_get_startchar_8(match_data);
 }
 
+fn pcre2_get_ovector_pointer(int match_data) -> int {
+    return pcre2_get_ovector_pointer_8(match_data);
+}
+
 fn pcre2_substring_number_from_name(int code, string name) -> int {
     return c_int(pcre2_substring_number_from_name_8(code, name));
 }
 
-/// The PCRE2 calls that write through out-parameters. `extern` blocks can't
-/// declare those, so they go through `declare` / `invoke`, where an int
-/// array argument is copied back after the call.
+/// `pcre2_compile` writes its error through out-parameters, which `extern`
+/// blocks can't declare, so it goes through `declare` / `invoke`, where an
+/// int array argument is copied back after the call.
 class Pcre2 {
     lib: int,
     compile_id: int,
-    length_id: int,
-    copy_id: int,
 }
 
 fn ffi_ok(Result r) -> Result<int, RegexError> {
@@ -93,18 +91,14 @@ fn ffi_ok(Result r) -> Result<int, RegexError> {
 // One dload per process: every `Regex` shares these ids.
 static let pcre2_lib = 0;
 static let pcre2_compile_id = 0;
-static let pcre2_length_id = 0;
-static let pcre2_copy_id = 0;
 
 fn pcre2_open() -> Result<Pcre2, RegexError> {
     if pcre2_lib == 0 {
         let lib = ffi_ok(dload("libpcre2-8.so.0"))?;
         pcre2_compile_id = ffi_ok(declare(lib, "pcre2_compile_8", (String, Int, Int, Ptr, Ptr, Int), Int))?;
-        pcre2_length_id = ffi_ok(declare(lib, "pcre2_substring_length_bynumber_8", (Int, Int, Ptr), Int))?;
-        pcre2_copy_id = ffi_ok(declare(lib, "pcre2_substring_copy_bynumber_8", (Int, Int, Ptr, Ptr), Int))?;
         pcre2_lib = lib;
     }
-    return new Pcre2(pcre2_lib, pcre2_compile_id, pcre2_length_id, pcre2_copy_id);
+    return new Pcre2(pcre2_lib, pcre2_compile_id);
 }
 
 /// A one-word out-parameter. Never empty: an empty array would be passed as
@@ -125,38 +119,12 @@ impl Pcre2 {
         return ffi_ok(invoke(self.lib, self.compile_id, (pattern, length, options, errorcode, erroroffset, 0)))?;
     }
 
-    /// Byte length of group `number`, or a negative PCRE2 error (unset, …).
-    pub fn substring_length(int match_data, int number) -> Result<int, RegexError> {
-        let length = out_word(0);
-        let rc = c_int(ffi_ok(invoke(self.lib, self.length_id, (match_data, number, length)))?);
-        if rc < 0 {
-            return rc;
-        }
-        return length[0];
-    }
-
-    /// The bytes of group `number`, or `rc` < 0 with no bytes (PCRE2's
-    /// error: unset, no such group, or a buffer of `nwords` words too small).
-    /// The buffer is a word array, so the bytes come back packed
-    /// little-endian, eight per word.
-    pub fn substring_copy(int match_data, int number, int nwords) -> Result<(int, Vec<byte>), RegexError> {
-        let words: Vec<int> = Vec::new();
-        for _ in 0..nwords {
-            words.push(0);
-        }
-        let bufflen = out_word(nwords * 8);
-        let rc = c_int(ffi_ok(invoke(self.lib, self.copy_id, (match_data, number, words, bufflen)))?);
-        let out: Vec<byte> = Vec::new();
-        if rc < 0 {
-            return (rc, out);
-        }
-        for i in 0..bufflen[0] {
-            let word = words[i / 8];
-            let shift = (i % 8) * 8;
-            let b: int = (word >> shift) & 255;
-            out.push(b as byte);
-        }
-        return (rc, out);
+    /// The first `count` offset pairs at `ovector`, as `2 * count` ints.
+    pub fn offsets(int ovector, int count) -> Result<Vec<int>, RegexError> {
+        return match read_ints(self.lib, ovector, count * 2) {
+            Result::Ok(v) => v,
+            Result::Err(_) => raise RegexError::Runtime,
+        };
     }
 }
 
@@ -171,8 +139,14 @@ class Regex {
     pcre2: Pcre2,
     code: int,
     match_data: int,
+    // PCRE2's offset vector inside `match_data`; fixed for its lifetime.
+    ovector: int,
     // Groups set by the last successful match (PCRE2's match return).
     count: int,
+    // Subject of the last match, which captures are sliced from.
+    subject: string,
+    // Offset pairs of the last match, read on first use; empty until then.
+    offsets: Vec<int>,
 }
 
 fn parse_flags(string flags) -> int {
@@ -250,7 +224,8 @@ fn compile(string pattern, string flags) -> Result<Regex, RegexError> {
         pcre2_code_free(code);
         raise RegexError::Runtime;
     }
-    return new Regex(pcre2, code, match_data, 0);
+    let ovector = pcre2_get_ovector_pointer(match_data);
+    return new Regex(pcre2, code, match_data, ovector, 0, "", Vec::new());
 }
 
 impl Regex {
@@ -324,18 +299,25 @@ impl Regex {
             raise RegexError::Runtime;
         }
         self.count = rc;
+        self.subject = subject;
+        self.offsets = Vec::new();
         return true;
+    }
+
+    /// Offset pairs of the last match, read from PCRE2 once per match.
+    fn match_offsets() -> Result<Vec<int>, RegexError> {
+        if len(self.offsets) == 0 {
+            self.offsets = self.pcre2.offsets(self.ovector, self.count)?;
+        }
+        return self.offsets;
     }
 
     /// Byte span of the last match. The start is where the match began, so
     /// a pattern using `\K` reports the span from before the `\K`.
     fn span() -> Result<(int, int), RegexError> {
         let start = pcre2_get_startchar(self.match_data);
-        let length = self.pcre2.substring_length(self.match_data, 0)?;
-        if length < 0 {
-            raise RegexError::Runtime;
-        }
-        return (start, start + length);
+        let ov = self.match_offsets()?;
+        return (start, start + ov[1] - ov[0]);
     }
 
     /// Text of group `index` in the last match; empty when unset or out of range.
@@ -343,22 +325,13 @@ impl Regex {
         if index < 0 || index >= self.count {
             return "";
         }
-        // One call covers short groups; a longer one asks for its length.
-        let (rc, bytes) = self.pcre2.substring_copy(self.match_data, index, SMALL_GROUP_WORDS)?;
-        if rc == PCRE2_ERROR_NOMEMORY {
-            let length = self.pcre2.substring_length(self.match_data, index)?;
-            let (rc2, all) = self.pcre2.substring_copy(self.match_data, index, length / 8 + 1)?;
-            if rc2 < 0 {
-                raise RegexError::Runtime;
-            }
-            bytes = all;
-        } else if rc < 0 {
+        let ov = self.match_offsets()?;
+        let start = ov[index * 2];
+        // An unset group's offsets are `PCRE2_UNSET` (`~(PCRE2_SIZE)0`).
+        if start < 0 {
             return "";
         }
-        return match from_bytes(bytes) {
-            Result::Ok(s) => s,
-            Result::Err(_) => raise RegexError::Utf8,
-        };
+        return byte_slice(self.subject, start, ov[index * 2 + 1])?;
     }
 
     /// Text of named group `name` in the last match; empty when unknown.
