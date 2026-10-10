@@ -122,3 +122,17 @@ test("replace_all named group") {
     };
     assert(out == "1:a 22:bb")?;
 }
+
+test("unset group captures as empty") {
+    let re = match compile("(a)|(b)", "") {
+        Result::Ok(v) => v,
+        Result::Err(_) => panic "compile",
+    };
+    let row = match captures(re, "b") {
+        Result::Ok(v) => v,
+        Result::Err(_) => panic "captures",
+    };
+    assert(row.len() == 3)?;
+    assert(row[1] == "")?;
+    assert(row[2] == "b")?;
+}
