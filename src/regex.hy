@@ -6,20 +6,20 @@ use string::{from_bytes, to_bytes};
 // PCRE2's 8-bit symbols. `pcre2.h` maps `pcre2_compile` to `pcre2_compile_8`
 // with macros, so the real names carry the code-unit suffix.
 extern "libpcre2-8.so.0" {
-    fn pcre2_compile_8(string pattern, int length, uint32 options, [int] errorcode, [int] erroroffset, int ccontext) -> int;
+    fn pcre2_compile_8(string pattern, int length, uint32 options, [int; 1] errorcode, [int; 1] erroroffset, int ccontext) -> int;
     fn pcre2_code_free_8(int code);
     fn pcre2_match_data_create_from_pattern_8(int code, int gcontext) -> int;
     fn pcre2_match_data_free_8(int match_data);
     fn pcre2_match_8(int code, string subject, int length, int start_offset, uint32 options, int match_data, int mcontext) -> int32;
     fn pcre2_get_startchar_8(int match_data) -> int;
-    fn pcre2_substring_length_bynumber_8(int match_data, uint32 number, [int] length) -> int32;
-    fn pcre2_substring_copy_bynumber_8(int match_data, uint32 number, [int] buffer, [int] bufflen) -> int32;
+    fn pcre2_substring_length_bynumber_8(int match_data, uint32 number, [int; 1] length) -> int32;
+    fn pcre2_substring_copy_bynumber_8(int match_data, uint32 number, ptr buffer, [int; 1] bufflen) -> int32;
     fn pcre2_substring_number_from_name_8(int code, string name) -> int32;
 }
 
 // Unsuffixed wrappers, so callers don't depend on the code-unit width.
 
-/// `PCRE2_ZERO_TERMINATED`: `~(PCRE2_SIZE)0`.
+// `PCRE2_ZERO_TERMINATED`: `~(PCRE2_SIZE)0`.
 const ZERO_TERMINATED: int = -1;
 
 const PCRE2_CASELESS: int = 8;
@@ -34,7 +34,7 @@ const PCRE2_ERROR_NOMATCH: int = -1;
 fn pcre2_compile(string pattern, int options) -> int {
     let errorcode = [0];
     let erroroffset = [0];
-    return pcre2_compile_8(pattern, ZERO_TERMINATED, options, errorcode, erroroffset, 0);
+    return pcre2_compile_8(pattern, ZERO_TERMINATED, options as uint32, errorcode, erroroffset, 0);
 }
 
 fn pcre2_code_free(int code) {
@@ -50,7 +50,7 @@ fn pcre2_match_data_free(int match_data) {
 }
 
 fn pcre2_match(int code, string subject, int start_offset, int match_data) -> int {
-    return pcre2_match_8(code, subject, ZERO_TERMINATED, start_offset, 0, match_data, 0);
+    return pcre2_match_8(code, subject, ZERO_TERMINATED, start_offset, 0 as uint32, match_data, 0) as int;
 }
 
 fn pcre2_get_startchar(int match_data) -> int {
@@ -60,7 +60,7 @@ fn pcre2_get_startchar(int match_data) -> int {
 /// Byte length of group `number`, or a negative PCRE2 error (unset, …).
 fn pcre2_substring_length_bynumber(int match_data, int number) -> int {
     let length = [0];
-    let rc = pcre2_substring_length_bynumber_8(match_data, number, length);
+    let rc = pcre2_substring_length_bynumber_8(match_data, number as uint32, length) as int;
     if rc < 0 {
         return rc;
     }
@@ -76,7 +76,7 @@ fn pcre2_substring_copy_bynumber(int match_data, int number, int length) -> Resu
         words.push(0);
     }
     let bufflen = [nwords * 8];
-    let rc = pcre2_substring_copy_bynumber_8(match_data, number, words, bufflen);
+    let rc = pcre2_substring_copy_bynumber_8(match_data, number as uint32, words, bufflen) as int;
     if rc < 0 {
         raise RegexError::Runtime;
     }
@@ -88,7 +88,7 @@ fn pcre2_substring_copy_bynumber(int match_data, int number, int length) -> Resu
 }
 
 fn pcre2_substring_number_from_name(int code, string name) -> int {
-    return pcre2_substring_number_from_name_8(code, name);
+    return pcre2_substring_number_from_name_8(code, name) as int;
 }
 
 enum RegexError {
@@ -212,9 +212,9 @@ fn find_all_from(Regex re, string subject, int offset, Vec<(int, int)> spans) ->
     if !re.next_match(subject, offset)? {
         return spans;
     }
-    let span = re.span()?;
-    spans.push(span);
-    return find_all_from(re, subject, advance_offset(span.1, span.0), spans)?;
+    let (start, end) = re.span()?;
+    spans.push((start, end));
+    return find_all_from(re, subject, advance_offset(end, start), spans)?;
 }
 
 #[max_depth(4096)]
@@ -222,9 +222,9 @@ fn captures_all_from(Regex re, string subject, int offset, Vec<Vec<string>> rows
     if !re.next_match(subject, offset)? {
         return rows;
     }
-    let span = re.span()?;
+    let (start, end) = re.span()?;
     rows.push(re.capture_row()?);
-    return captures_all_from(re, subject, advance_offset(span.1, span.0), rows)?;
+    return captures_all_from(re, subject, advance_offset(end, start), rows)?;
 }
 
 #[max_depth(4096)]
@@ -235,10 +235,10 @@ fn replace_all_from(Regex re, string subject, string template, int pos, string o
         }
         return out + slice_bytes(subject, pos, len(to_bytes(subject)))?;
     }
-    let span = re.span()?;
-    let head = slice_bytes(subject, pos, span.0)?;
+    let (start, end) = re.span()?;
+    let head = slice_bytes(subject, pos, start)?;
     let piece = re.expand_replacement(template)?;
-    return replace_all_from(re, subject, template, advance_offset(span.1, span.0), out + head + piece, true)?;
+    return replace_all_from(re, subject, template, advance_offset(end, start), out + head + piece, true)?;
 }
 
 impl Regex {
@@ -381,9 +381,9 @@ impl Regex {
                 parts.push(slice_bytes(subject, offset, n)?);
                 return parts;
             }
-            let span = self.span()?;
-            parts.push(slice_bytes(subject, offset, span.0)?);
-            offset = advance_offset(span.1, span.0);
+            let (start, end) = self.span()?;
+            parts.push(slice_bytes(subject, offset, start)?);
+            offset = advance_offset(end, start);
         }
     }
 
@@ -417,9 +417,9 @@ impl Regex {
         if !self.next_match(subject, 0)? {
             return subject;
         }
-        let span = self.span()?;
-        let head = slice_bytes(subject, 0, span.0)?;
-        let tail = slice_bytes(subject, span.1, len(to_bytes(subject)))?;
+        let (start, end) = self.span()?;
+        let head = slice_bytes(subject, 0, start)?;
+        let tail = slice_bytes(subject, end, len(to_bytes(subject)))?;
         let piece = self.expand_replacement(template)?;
         return head + piece + tail;
     }
