@@ -23,4 +23,4 @@ make test
 ## See also
 
 - [api.md](api.md) — function reference
-- [consume.md](consume.md). Sibling checkout, `{ git }`, `coil.lock` `rev` + `content_hash`, dload flags
+- [consume.md](consume.md). Sibling checkout, `spool add`, dload flags
