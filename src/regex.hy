@@ -187,11 +187,19 @@ fn parse_flags(string flags) -> int {
     return opts;
 }
 
-fn advance_offset(int next, int start) -> int {
-    if next <= start {
-        return next + 1;
+/// Where the next search starts after a match `[start, next)`. An empty match
+/// steps over one whole character, so the offset never lands inside a UTF-8
+/// sequence (PCRE2 rejects that).
+fn advance_offset(string subject, int next, int start) -> int {
+    if next > start {
+        return next;
     }
-    return next;
+    let i = next + 1;
+    let n = len(subject);
+    while i < n && ((subject[i] as int) & 192) == 128 {
+        i = i + 1;
+    }
+    return i;
 }
 
 fn parse_usize(string digits) -> int {
@@ -261,7 +269,7 @@ impl Regex {
         }
         let (start, end) = self.span()?;
         spans.push((start, end));
-        return self.find_all_from(subject, advance_offset(end, start), spans)?;
+        return self.find_all_from(subject, advance_offset(subject, end, start), spans)?;
     }
 
     #[max_depth(4096)]
@@ -271,7 +279,7 @@ impl Regex {
         }
         let (start, end) = self.span()?;
         rows.push(self.capture_row()?);
-        return self.captures_all_from(subject, advance_offset(end, start), rows)?;
+        return self.captures_all_from(subject, advance_offset(subject, end, start), rows)?;
     }
 
     #[max_depth(4096)]
@@ -285,7 +293,7 @@ impl Regex {
         let (start, end) = self.span()?;
         let head = byte_slice(subject, pos, start)?;
         let piece = self.expand_replacement(template)?;
-        return self.replace_all_from(subject, template, advance_offset(end, start), out + head + piece, true)?;
+        return self.replace_all_from(subject, template, advance_offset(subject, end, start), out + head + piece, true)?;
     }
 
     fn drop() {
@@ -434,7 +442,7 @@ impl Regex {
             }
             let (start, end) = self.span()?;
             parts.push(byte_slice(subject, offset, start)?);
-            offset = advance_offset(end, start);
+            offset = advance_offset(subject, end, start);
         }
     }
 
