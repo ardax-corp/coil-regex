@@ -2,7 +2,7 @@
 // free-function API of the former virtual module.
 
 use ffi::{declare, dload, invoke, read_ints};
-use ffi::types::{Int, Ptr, String};
+use ffi::types::{ConstBytes, Int, Ptr, String};
 use string::{from_bytes, slice_bytes, to_bytes};
 
 // libpcre2-8's 8-bit symbols. `pcre2.h` maps `pcre2_compile` to
@@ -13,7 +13,6 @@ extern "libpcre2-8.so.0" {
     fn pcre2_code_free_8(int code);
     fn pcre2_match_data_create_from_pattern_8(int code, int gcontext) -> int;
     fn pcre2_match_data_free_8(int match_data);
-    fn pcre2_match_8(int code, string subject, int length, int start_offset, int options, int match_data, int mcontext) -> int;
     fn pcre2_get_startchar_8(int match_data) -> int;
     fn pcre2_get_ovector_pointer_8(int match_data) -> int;
     fn pcre2_substring_number_from_name_8(int code, string name) -> int;
@@ -30,6 +29,10 @@ static const PCRE2_UCP = 131072;
 static const PCRE2_UTF = 524288;
 
 static const PCRE2_ERROR_NOMATCH = -1;
+
+// Coil strings are always valid UTF-8, so PCRE2 need not re-check the whole
+// subject on every match. The start offset must still be a char boundary.
+static const PCRE2_NO_UTF_CHECK = 1073741824;
 
 /// Sign-extend a C `int` result from the low 32 bits of the return register.
 fn c_int(int raw) -> int {
@@ -54,13 +57,6 @@ fn pcre2_match_data_free(int match_data) {
     pcre2_match_data_free_8(match_data);
 }
 
-// Captures are sliced out of the coil string by offset, so PCRE2 never reads
-// the subject after the call and needs no copy of it.
-fn pcre2_match(int code, string subject, int start_offset, int match_data) -> int {
-    let rc = pcre2_match_8(code, subject, ZERO_TERMINATED, start_offset, 0, match_data, 0);
-    return c_int(rc);
-}
-
 fn pcre2_get_startchar(int match_data) -> int {
     return pcre2_get_startchar_8(match_data);
 }
@@ -79,6 +75,7 @@ fn pcre2_substring_number_from_name(int code, string name) -> int {
 class Pcre2 {
     lib: int,
     compile_id: int,
+    match_id: int,
 }
 
 fn ffi_ok(Result r) -> Result<int, RegexError> {
@@ -91,14 +88,18 @@ fn ffi_ok(Result r) -> Result<int, RegexError> {
 // One dload per process: every `Regex` shares these ids.
 static let pcre2_lib = 0;
 static let pcre2_compile_id = 0;
+static let pcre2_match_id = 0;
 
 fn pcre2_open() -> Result<Pcre2, RegexError> {
     if pcre2_lib == 0 {
         let lib = ffi_ok(dload("libpcre2-8.so.0"))?;
         pcre2_compile_id = ffi_ok(declare(lib, "pcre2_compile_8", (String, Int, Int, Ptr, Ptr, Int), Int))?;
+        // `ConstBytes` lends the subject's bytes in place; `String` would copy
+        // the whole subject into a C string on every match.
+        pcre2_match_id = ffi_ok(declare(lib, "pcre2_match_8", (Int, ConstBytes, Int, Int, Int, Int, Int), Int))?;
         pcre2_lib = lib;
     }
-    return new Pcre2(pcre2_lib, pcre2_compile_id);
+    return new Pcre2(pcre2_lib, pcre2_compile_id, pcre2_match_id);
 }
 
 /// A one-word out-parameter. Never empty: an empty array would be passed as
@@ -117,6 +118,21 @@ impl Pcre2 {
         // A bare global in an `invoke` tuple reads as a callback; pass a local.
         let length = ZERO_TERMINATED;
         return ffi_ok(invoke(self.lib, self.compile_id, (pattern, length, options, errorcode, erroroffset, 0)))?;
+    }
+
+    /// Match `subject` from byte `start_offset`; the PCRE2 return code.
+    /// Captures are sliced out of the coil string by offset, so PCRE2 never
+    /// reads the subject after the call and needs no copy of it.
+    pub fn match_at(int code, string subject, int start_offset, int match_data) -> Result<int, RegexError> {
+        let length = len(subject);
+        // An offset inside a UTF-8 sequence is undefined behaviour under
+        // `PCRE2_NO_UTF_CHECK`; let PCRE2 check (and reject) that one.
+        let options = PCRE2_NO_UTF_CHECK;
+        if start_offset < length && ((subject[start_offset] as int) & 192) == 128 {
+            options = 0;
+        }
+        let rc = ffi_ok(invoke(self.lib, self.match_id, (code, subject, length, start_offset, options, match_data, 0)))?;
+        return c_int(rc);
     }
 
     /// The first `count` offset pairs at `ovector`, as `2 * count` ints.
@@ -291,7 +307,7 @@ impl Regex {
         if offset > len(subject) {
             return false;
         }
-        let rc = pcre2_match(self.code, subject, offset, self.match_data);
+        let rc = self.pcre2.match_at(self.code, subject, offset, self.match_data)?;
         if rc == PCRE2_ERROR_NOMATCH {
             return false;
         }
