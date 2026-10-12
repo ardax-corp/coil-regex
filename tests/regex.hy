@@ -238,3 +238,14 @@ test("replace mid utf8 slice is Utf8") {
     let re = must_ok(compile("\\C", ""));
     expect_utf8(replace(re, "é", "x"));
 }
+
+test("find_all empty matches step over whole utf8 chars") {
+    let re = must_ok(compile("x*", ""));
+    let spans = match find_all(re, "é") {
+        Result::Ok(s) => s,
+        Result::Err(_) => panic "find_all empty utf8",
+    };
+    assert(spans.len() == 2)?;
+    assert(spans[0][0] == 0)?;
+    assert(spans[1][0] == 2)?;
+}
