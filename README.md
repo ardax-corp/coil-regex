@@ -4,7 +4,7 @@ Userland PCRE2 regex for [coil](https://github.com/ardax-corp/coil-lang). Replac
 
 ## Requirements
 
-- coil-lang with finalizers (inherent `fn drop()`)
+- coil-lang with finalizers (inherent `fn drop()`) and `ffi::types::ConstBytes` (archive minor 37)
 - libpcre2-8 (`libpcre2-dev` on Debian/Ubuntu, `pcre2` on Homebrew)
 - libffi (for coil FFI)
 
