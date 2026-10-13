@@ -9,6 +9,8 @@
 .PHONY: all test print-lib
 
 COIL ?= coil
+# Extra module roots for `make test` (CI passes the coil-stdlib checkout).
+COIL_ROOTS ?=
 
 # Directory holding libpcre2-8 (override if pkg-config is missing).
 PCRE2_LIBDIR ?= $(shell pkg-config --variable=libdir libpcre2-8 2>/dev/null)
@@ -29,4 +31,4 @@ print-lib:
 test:
 	@test -n "$(PCRE2_LIB)" || { echo "libpcre2-8 not found; set PCRE2_LIBDIR" >&2; exit 1; }
 	$(COIL) test --allow-dload pcre2-8 --dload-pin pcre2-8=$(call sha256,$(PCRE2_LIB)) \
-		--ffi-search-path $(dir $(PCRE2_LIB))
+		--ffi-search-path $(dir $(PCRE2_LIB)) $(COIL_ROOTS)
