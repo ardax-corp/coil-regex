@@ -1,3 +1,4 @@
+use tests::assert;
 use regex::{RegexError, compile, captures, captures_all, replace_all};
 
 test("captures group text") {
@@ -9,9 +10,9 @@ test("captures group text") {
         Result::Ok(v) => v,
         Result::Err(_) => panic "captures",
     };
-    assert(row.len() == 3)?;
-    assert(row[1] == "a")?;
-    assert(row[2] == "b")?;
+    assert!(row.len() == 3);
+    assert!(row[1] == "a");
+    assert!(row[2] == "b");
 }
 
 test("captures no match is NoMatch") {
@@ -37,16 +38,16 @@ test("captures_all rows") {
         Result::Ok(v) => v,
         Result::Err(_) => panic "captures_all",
     };
-    assert(rows.len() == 2)?;
+    assert!(rows.len() == 2);
     let first = rows[0];
-    assert(first.len() == 3)?;
-    assert(first[0] == "a=1")?;
-    assert(first[1] == "a")?;
-    assert(first[2] == "1")?;
+    assert!(first.len() == 3);
+    assert!(first[0] == "a=1");
+    assert!(first[1] == "a");
+    assert!(first[2] == "1");
     let second = rows[1];
-    assert(second[0] == "b=2")?;
-    assert(second[1] == "b")?;
-    assert(second[2] == "2")?;
+    assert!(second[0] == "b=2");
+    assert!(second[1] == "b");
+    assert!(second[2] == "2");
 }
 
 test("captures_all empty is empty not NoMatch") {
@@ -58,7 +59,7 @@ test("captures_all empty is empty not NoMatch") {
         Result::Ok(v) => v,
         Result::Err(_) => panic "captures_all empty",
     };
-    assert(rows.len() == 0)?;
+    assert!(rows.len() == 0);
 }
 
 test("replace_all substitution") {
@@ -70,7 +71,7 @@ test("replace_all substitution") {
         Result::Ok(v) => v,
         Result::Err(_) => panic "replace",
     };
-    assert(out == "a->1")?;
+    assert!(out == "a->1");
 }
 
 test("captures longer than one word and multi-byte UTF-8") {
@@ -82,7 +83,7 @@ test("captures longer than one word and multi-byte UTF-8") {
         Result::Ok(v) => v,
         Result::Err(_) => panic "captures",
     };
-    assert(row[1] == "héllo wörld, a long capture")?;
+    assert!(row[1] == "héllo wörld, a long capture");
 }
 
 test("capture longer than the first-try buffer") {
@@ -95,7 +96,7 @@ test("capture longer than the first-try buffer") {
         Result::Ok(v) => v,
         Result::Err(_) => panic "captures",
     };
-    assert(row[1] == long)?;
+    assert!(row[1] == long);
 }
 
 test("unset optional group is empty") {
@@ -107,8 +108,8 @@ test("unset optional group is empty") {
         Result::Ok(v) => v,
         Result::Err(_) => panic "captures",
     };
-    assert(row[1] == "")?;
-    assert(row[2] == "b")?;
+    assert!(row[1] == "");
+    assert!(row[2] == "b");
 }
 
 test("replace_all named group") {
@@ -120,7 +121,7 @@ test("replace_all named group") {
         Result::Ok(v) => v,
         Result::Err(_) => panic "replace_all",
     };
-    assert(out == "1:a 22:bb")?;
+    assert!(out == "1:a 22:bb");
 }
 
 test("unset group captures as empty") {
@@ -132,7 +133,7 @@ test("unset group captures as empty") {
         Result::Ok(v) => v,
         Result::Err(_) => panic "captures",
     };
-    assert(row.len() == 3)?;
-    assert(row[1] == "")?;
-    assert(row[2] == "b")?;
+    assert!(row.len() == 3);
+    assert!(row[1] == "");
+    assert!(row[2] == "b");
 }

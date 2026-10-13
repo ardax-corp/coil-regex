@@ -1,3 +1,4 @@
+use tests::assert;
 use gc::{collect, heap_bytes};
 use regex::{RegexError, compile, is_match};
 
@@ -42,5 +43,5 @@ test("compile and drop does not grow heap across collect") {
     compile_batch(32);
     collect();
     let after = heap_bytes();
-    assert(after <= before)?;
+    assert!(after <= before);
 }
