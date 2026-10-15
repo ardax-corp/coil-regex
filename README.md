@@ -4,28 +4,22 @@ Userland PCRE2 regex for [coil](https://github.com/ardax-corp/coil-lang). Replac
 
 ## Requirements
 
-- coil-lang with finalizers (inherent `fn drop()`)
+- coil-lang with finalizers (inherent `fn drop()`) and `ffi::types::ConstBytes` (archive minor 37)
 - libpcre2-8 (`libpcre2-dev` on Debian/Ubuntu, `pcre2` on Homebrew)
 - libffi (for coil FFI)
+
+There is no native shim to build: `src/regex.hy` calls libpcre2-8 directly through `extern`.
 
 ## Quick start
 
 ```bash
-make          # native/libregex.{so,dylib,dll}
-make smoke    # C ABI smoke (optional)
 make test     # coil language harness (needs coil on PATH)
 ```
 
-Or build only the native tree:
+Run the demo (the library must be granted and pinned, see [consume.md](docs/consume.md)):
 
 ```bash
-make -C native
-```
-
-Run the demo:
-
-```bash
-coil examples/regex_demo.hy
+coil --allow-dload pcre2-8 --dload-pin pcre2-8=<sha256> --ffi-search-path <libdir> examples/regex_demo.hy
 # true,2,a->1 b->2,a|b|c
 ```
 

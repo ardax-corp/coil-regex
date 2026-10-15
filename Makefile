@@ -1,35 +1,34 @@
-# coil-regex — build the FFI artifact and run package tests.
+# coil-regex: run package tests against the system libpcre2-8.
 #
 # Targets:
-#   make / make native  — build native/libregex.{so,dylib,dll}
-#   make smoke          — C ABI smoke test (after native)
-#   make test           — coil language harness (needs `coil` on PATH)
-#   make clean          — remove build products
+#   make test  — coil language harness (needs `coil` on PATH and libpcre2-8)
+#
+# The package binds libpcre2-8 directly (no C shim). coil's dload gate needs
+# `--dload-pin pcre2-8=SHA256` (or `--dload-trusted pcre2-8`) for that library.
 
-.PHONY: all native smoke test clean dist
+.PHONY: all test print-lib
 
 COIL ?= coil
+# Extra module roots for `make test` (CI passes the coil-stdlib checkout).
+COIL_ROOTS ?=
 
-all: native
+# Directory holding libpcre2-8 (override if pkg-config is missing).
+PCRE2_LIBDIR ?= $(shell pkg-config --variable=libdir libpcre2-8 2>/dev/null)
 
-native:
-	$(MAKE) -C native artifact
+# The file dload opens for `libpcre2-8.so.0` on this platform.
+PCRE2_LIB ?= $(firstword $(wildcard \
+	$(PCRE2_LIBDIR)/libpcre2-8.so.0 \
+	$(PCRE2_LIBDIR)/libpcre2-8.dylib))
 
-smoke: native
-	$(MAKE) -C native smoke
+sha256 = $(shell if command -v sha256sum >/dev/null 2>&1; then sha256sum "$(1)"; \
+	else shasum -a 256 "$(1)"; fi 2>/dev/null | awk '{print $$1}')
 
-# Host grant is CLI-only. Runtime dload still needs a native sha256 pin.
-test: native
-	@lib=native/libregex.so; \
-	  if [ -f native/libregex.dylib ]; then lib=native/libregex.dylib; fi; \
-	  if [ -f native/libregex.dll ]; then lib=native/libregex.dll; fi; \
-	  if command -v sha256sum >/dev/null 2>&1; then hash=$$(sha256sum "$$lib" | awk '{print $$1}'); \
-	  else hash=$$(shasum -a 256 "$$lib" | awk '{print $$1}'); fi; \
-	  printf '%s\n' '[[package]]' "name = 'regex'" '[[package.native]]' "sha256 = '$$hash'" > coil.lock
-	$(COIL) test --allow-dload regex --ffi-search-path native
+all: test
 
-clean:
-	$(MAKE) -C native clean
+print-lib:
+	@echo $(PCRE2_LIB)
 
-dist: native
-	@$(MAKE) -C native print-artifact
+test:
+	@test -n "$(PCRE2_LIB)" || { echo "libpcre2-8 not found; set PCRE2_LIBDIR" >&2; exit 1; }
+	$(COIL) test --allow-dload pcre2-8 --dload-pin pcre2-8=$(call sha256,$(PCRE2_LIB)) \
+		--ffi-search-path $(dir $(PCRE2_LIB)) $(COIL_ROOTS)

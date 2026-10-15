@@ -7,12 +7,14 @@ Module: `use regex::{…};` (package name `regex` from `coil.toml`).
 ```coil
 enum RegexError { Compile, Runtime, NoMatch, Utf8 }
 
-class Regex { handle: int }
+class Regex { pcre2: Pcre2, code: int, match_data: int, count: int }
 ```
 
-Handles are opaque native pointers cast to `int`. They are **not** thread-sendable; use one `Regex` per thread.
+`code` and `match_data` are PCRE2 pointers cast to `int`. A `Regex` keeps its last match, so it is **not** thread-sendable; use one `Regex` per thread.
 
-`Regex` runs `coil_regex_free` from inherent `fn drop()` at GC / teardown.
+`Regex` frees both from inherent `fn drop()` at GC / teardown.
+
+Spans start where the match began (`pcre2_get_startchar`) and run for the length of group 0. A pattern using `\K` therefore reports the span from before the `\K`.
 
 ## Flags
 
@@ -63,6 +65,6 @@ All return `Result<_, RegexError>` unless noted.
 
 `find_all` on no matches returns `Ok([])`, not `NoMatch`.
 
-## C ABI (FFI)
+## PCRE2 binding (FFI)
 
-Declared in `extern "regex" { … }` inside `regex.hy`. Do not call `pcre2_*` from coil source.
+`regex.hy` binds libpcre2-8 directly: an `extern "libpcre2-8.so.0" { … }` block for plain calls, and a private `Pcre2` class (`declare` / `invoke`) for the calls that write through out-parameters and for `pcre2_match_8`, which takes the subject as `ffi::types::ConstBytes` (the string's bytes are lent in place, not copied) with `PCRE2_NO_UTF_CHECK` (coil strings are valid UTF-8). The unsuffixed `pcre2_*` wrappers are package-internal. Use `Regex` and the free functions from coil source.
