@@ -20,7 +20,7 @@ fn main() {
         Result::Ok(s) => s,
         Result::Err(_) => panic "find_all",
     };
-    write(stdout(), to_bytes(format("%i,", len(spans))));
+    write(stdout(), to_bytes(format("%i,", spans.len())));
     write(stdout(), to_bytes(format("%s,", match replace_all(re, "a=1 b=2", "$1->$2") {
         Result::Ok(s) => s,
         Result::Err(_) => "",
