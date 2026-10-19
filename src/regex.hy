@@ -124,7 +124,7 @@ impl Pcre2 {
     /// Captures are sliced out of the coil string by offset, so PCRE2 never
     /// reads the subject after the call and needs no copy of it.
     pub fn match_at(int code, string subject, int start_offset, int match_data) -> Result<int, RegexError> {
-        let length = len(subject);
+        let length = subject.len();
         // An offset inside a UTF-8 sequence is undefined behaviour under
         // `PCRE2_NO_UTF_CHECK`; let PCRE2 check (and reject) that one.
         let options = PCRE2_NO_UTF_CHECK;
@@ -168,7 +168,7 @@ class Regex {
 fn parse_flags(string flags) -> int {
     let opts = PCRE2_UTF;
     let bytes = to_bytes(flags);
-    for i in 0..len(bytes) {
+    for i in 0..bytes.len() {
         let c = bytes[i] as int;
         if c == 105 {
             opts = opts | PCRE2_CASELESS;
@@ -195,7 +195,7 @@ fn advance_offset(string subject, int next, int start) -> int {
         return next;
     }
     let i = next + 1;
-    let n = len(subject);
+    let n = subject.len();
     while i < n && ((subject[i] as int) & 192) == 128 {
         i = i + 1;
     }
@@ -204,7 +204,7 @@ fn advance_offset(string subject, int next, int start) -> int {
 
 fn parse_usize(string digits) -> int {
     let bytes = to_bytes(digits);
-    let n = len(bytes);
+    let n = bytes.len();
     let idx = 0;
     let i = 0;
     while i < n {
@@ -215,7 +215,7 @@ fn parse_usize(string digits) -> int {
 }
 
 fn byte_slice(string subject, int start, int end) -> Result<string, RegexError> {
-    if start < 0 || end < start || start > len(subject) {
+    if start < 0 || end < start || start > subject.len() {
         raise RegexError::Runtime;
     }
     return match slice_bytes(subject, start, end) {
@@ -227,7 +227,7 @@ fn byte_slice(string subject, int start, int end) -> Result<string, RegexError> 
 fn push_all(Vec<byte> out, string s) {
     let bytes = to_bytes(s);
     let j = 0;
-    while j < len(bytes) {
+    while j < bytes.len() {
         out.push(bytes[j]);
         j = j + 1;
     }
@@ -288,7 +288,7 @@ impl Regex {
             if !replaced {
                 return subject;
             }
-            return out + byte_slice(subject, pos, len(subject))?;
+            return out + byte_slice(subject, pos, subject.len())?;
         }
         let (start, end) = self.span()?;
         let head = byte_slice(subject, pos, start)?;
@@ -312,7 +312,7 @@ impl Regex {
         if offset < 0 {
             raise RegexError::Runtime;
         }
-        if offset > len(subject) {
+        if offset > subject.len() {
             return false;
         }
         let rc = self.pcre2.match_at(self.code, subject, offset, self.match_data)?;
@@ -330,7 +330,7 @@ impl Regex {
 
     /// Offset pairs of the last match, read from PCRE2 once per match.
     fn match_offsets() -> Result<Vec<int>, RegexError> {
-        if len(self.offsets) == 0 {
+        if self.offsets.len() == 0 {
             self.offsets = self.pcre2.offsets(self.ovector, self.count)?;
         }
         return self.offsets;
@@ -375,7 +375,7 @@ impl Regex {
         let bytes = to_bytes(template);
         let out: Vec<byte> = Vec::new();
         let i = 0;
-        let n = len(bytes);
+        let n = bytes.len();
         while i < n {
             if bytes[i] != (36 as byte) {
                 out.push(bytes[i]);
@@ -434,7 +434,7 @@ impl Regex {
     pub fn split(string subject) -> Result<Vec<string>, RegexError> {
         let parts: Vec<string> = Vec::new();
         let offset = 0;
-        let n = len(subject);
+        let n = subject.len();
         while true {
             if !self.next_match(subject, offset)? {
                 parts.push(byte_slice(subject, offset, n)?);
@@ -478,7 +478,7 @@ impl Regex {
         }
         let (start, end) = self.span()?;
         let head = byte_slice(subject, 0, start)?;
-        let tail = byte_slice(subject, end, len(subject))?;
+        let tail = byte_slice(subject, end, subject.len())?;
         let piece = self.expand_replacement(template)?;
         return head + piece + tail;
     }
