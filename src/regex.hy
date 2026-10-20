@@ -19,20 +19,20 @@ extern "libpcre2-8.so.0" {
 }
 
 // `PCRE2_ZERO_TERMINATED`: `~(PCRE2_SIZE)0`.
-static const ZERO_TERMINATED = -1;
+const ZERO_TERMINATED = -1;
 
-static const PCRE2_CASELESS = 8;
-static const PCRE2_DOTALL = 32;
-static const PCRE2_EXTENDED = 128;
-static const PCRE2_MULTILINE = 1024;
-static const PCRE2_UCP = 131072;
-static const PCRE2_UTF = 524288;
+const PCRE2_CASELESS = 8;
+const PCRE2_DOTALL = 32;
+const PCRE2_EXTENDED = 128;
+const PCRE2_MULTILINE = 1024;
+const PCRE2_UCP = 131072;
+const PCRE2_UTF = 524288;
 
-static const PCRE2_ERROR_NOMATCH = -1;
+const PCRE2_ERROR_NOMATCH = -1;
 
 // Coil strings are always valid UTF-8, so PCRE2 need not re-check the whole
 // subject on every match. The start offset must still be a char boundary.
-static const PCRE2_NO_UTF_CHECK = 1073741824;
+const PCRE2_NO_UTF_CHECK = 1073741824;
 
 /// Sign-extend a C `int` result from the low 32 bits of the return register.
 fn c_int(int raw) -> int {
