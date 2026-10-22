@@ -48,6 +48,25 @@ All return `Result<_, RegexError>` unless noted.
 
 `find` / `find_all` spans are **byte offsets** into the UTF-8 subject, not Unicode code points.
 
+`Regex` methods `find_at(subject, from)` (first match at or after byte `from`), `matches_prefix(subject)` / `matches_suffix(subject)` (a match anchored at the start / the end) and `expand_template(template)` (the last match's replacement text) back the `Pattern` instance below.
+
+## String methods (`text::Searchable`)
+
+`Regex` implements coil-stdlib's `text::Pattern`, so the `text::Searchable` methods on `string` take a compiled regex wherever they take a literal:
+
+```coil
+use text::{Searchable};
+use regex::{compile};
+
+let re = compile("[0-9]+", "")?;
+"build 42".contains(re);                   // true
+"a1b22c".split(re);                        // ["a", "b", "c"]
+"a=1 b=2".replace_all(compile("(\\w)=(\\d)", "")?, "$2:$1"); // "1:a 2:b"
+"2026-10-22".starts_with(compile("[0-9]{4}-", "")?);           // true
+```
+
+`starts_with` / `ends_with` use PCRE2's `ANCHORED` / `ENDANCHORED`, so `ends_with` finds a match ending at the end even when an earlier match does not (`"xab".ends_with(compile("a|ab", "")?)`). `replace_first` / `replace_all` expand `$n` / `${name}` / `$$` in the replacement. A PCRE2 failure while matching (its match limit, say) panics in these methods; call the `Regex` methods for a `Result`. The package now needs coil-stdlib (`text`) on the module path.
+
 ## Replacement templates
 
 - `$0` … `$9` — numeric capture index
