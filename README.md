@@ -7,6 +7,7 @@ Userland PCRE2 regex for [coil](https://github.com/ardax-corp/coil-lang). Replac
 - coil-lang with finalizers (inherent `fn drop()`) and `ffi::types::ConstBytes` (archive minor 37)
 - libpcre2-8 (`libpcre2-dev` on Debian/Ubuntu, `pcre2` on Homebrew)
 - libffi (for coil FFI)
+- [coil-stdlib](https://github.com/ardax-corp/coil-stdlib) on the module path (`text::Pattern`)
 
 There is no native shim to build: `src/regex.hy` calls libpcre2-8 directly through `extern`.
 
