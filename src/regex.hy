@@ -4,6 +4,7 @@
 use ffi::{declare, dload, invoke, read_ints};
 use ffi::types::{ConstBytes, Int, Ptr, String};
 use string::{from_bytes, slice_bytes, to_bytes};
+use text::{Pattern, Span};
 
 // libpcre2-8's 8-bit symbols. `pcre2.h` maps `pcre2_compile` to
 // `pcre2_compile_8` with macros, so the real names carry the code-unit
@@ -29,6 +30,11 @@ const PCRE2_UCP = 131072;
 const PCRE2_UTF = 524288;
 
 const PCRE2_ERROR_NOMATCH = -1;
+
+// Match-time options: the match must start at the start offset, or end at
+// the end of the subject.
+const PCRE2_ANCHORED = 2147483648;
+const PCRE2_ENDANCHORED = 536870912;
 
 // Coil strings are always valid UTF-8, so PCRE2 need not re-check the whole
 // subject on every match. The start offset must still be a char boundary.
@@ -120,16 +126,16 @@ impl Pcre2 {
         return ffi_ok(invoke(self.lib, self.compile_id, (pattern, length, options, errorcode, erroroffset, 0)))?;
     }
 
-    /// Match `subject` from byte `start_offset`; the PCRE2 return code.
-    /// Captures are sliced out of the coil string by offset, so PCRE2 never
-    /// reads the subject after the call and needs no copy of it.
-    pub fn match_at(int code, string subject, int start_offset, int match_data) -> Result<int, RegexError> {
+    /// Match `subject` from byte `start_offset` with the match-time
+    /// `options`; the PCRE2 return code. Captures are sliced out of the coil
+    /// string by offset, so PCRE2 never reads the subject after the call and
+    /// needs no copy of it.
+    pub fn match_at(int code, string subject, int start_offset, int match_data, int options) -> Result<int, RegexError> {
         let length = subject.len();
         // An offset inside a UTF-8 sequence is undefined behaviour under
         // `PCRE2_NO_UTF_CHECK`; let PCRE2 check (and reject) that one.
-        let options = PCRE2_NO_UTF_CHECK;
-        if start_offset < length && ((subject[start_offset] as int) & 192) == 128 {
-            options = 0;
+        if start_offset >= length || ((subject[start_offset] as int) & 192) != 128 {
+            options = options | PCRE2_NO_UTF_CHECK;
         }
         let rc = ffi_ok(invoke(self.lib, self.match_id, (code, subject, length, start_offset, options, match_data, 0)))?;
         return c_int(rc);
@@ -309,13 +315,18 @@ impl Regex {
 
     /// Match from byte `offset`: `true` on a match, `false` on none.
     fn next_match(string subject, int offset) -> Result<bool, RegexError> {
+        return self.next_match_with(subject, offset, 0)?;
+    }
+
+    /// `next_match` with match-time PCRE2 `options` (`PCRE2_ANCHORED`, …).
+    fn next_match_with(string subject, int offset, int options) -> Result<bool, RegexError> {
         if offset < 0 {
             raise RegexError::Runtime;
         }
         if offset > subject.len() {
             return false;
         }
-        let rc = self.pcre2.match_at(self.code, subject, offset, self.match_data)?;
+        let rc = self.pcre2.match_at(self.code, subject, offset, self.match_data, options)?;
         if rc == PCRE2_ERROR_NOMATCH {
             return false;
         }
@@ -457,6 +468,29 @@ impl Regex {
         return self.span()?;
     }
 
+    /// First match at or after byte `from`, as `(start, end)` byte indices.
+    pub fn find_at(string subject, int from) -> Result<(int, int), RegexError> {
+        if !self.next_match(subject, from)? {
+            raise RegexError::NoMatch;
+        }
+        return self.span()?;
+    }
+
+    /// Whether a match starts at the beginning of `subject`.
+    pub fn matches_prefix(string subject) -> Result<bool, RegexError> {
+        return self.next_match_with(subject, 0, PCRE2_ANCHORED)?;
+    }
+
+    /// Whether a match ends at the end of `subject`.
+    pub fn matches_suffix(string subject) -> Result<bool, RegexError> {
+        return self.next_match_with(subject, 0, PCRE2_ENDANCHORED)?;
+    }
+
+    /// `template` with `$n` / `${name}` / `$$` expanded from the last match.
+    pub fn expand_template(string template) -> Result<string, RegexError> {
+        return self.expand_replacement(template)?;
+    }
+
     pub fn find_all(string subject) -> Result<Vec<(int, int)>, RegexError> {
         return self.find_all_from(subject, 0, Vec::new())?;
     }
@@ -518,4 +552,41 @@ fn replace(Regex re, string subject, string template) -> Result<string, RegexErr
 
 fn replace_all(Regex re, string subject, string template) -> Result<string, RegexError> {
     return re.replace_all(subject, template)?;
+}
+
+fn must_match(Result<bool, RegexError> r) -> bool {
+    return match r {
+        Result::Ok(found) => found,
+        Result::Err(_) => panic "regex: PCRE2 match failed",
+    };
+}
+
+// A `Regex` is a `text::Pattern`, so the `text::Searchable` methods take it:
+// `"foobar".contains(re)`, `line.split(re)`, `s.replace_all(re, "$1")`.
+// A PCRE2 failure while matching (such as its match limit) panics.
+impl Pattern for Regex {
+    pub fn find_in(Regex re, string hay, int from) -> Option<Span> {
+        return match re.find_at(hay, from) {
+            Result::Ok(span) => Option::Some(new Span(span[0], span[1])),
+            Result::Err(e) => match e {
+                RegexError::NoMatch => Option::None,
+                default => panic "regex: PCRE2 match failed",
+            },
+        };
+    }
+
+    pub fn is_prefix_of(Regex re, string hay) -> bool {
+        return must_match(re.matches_prefix(hay));
+    }
+
+    pub fn is_suffix_of(Regex re, string hay) -> bool {
+        return must_match(re.matches_suffix(hay));
+    }
+
+    pub fn expand(Regex re, string template) -> string {
+        return match re.expand_template(template) {
+            Result::Ok(s) => s,
+            Result::Err(_) => panic "regex: bad replacement template",
+        };
+    }
 }
