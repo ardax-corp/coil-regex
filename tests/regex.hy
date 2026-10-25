@@ -18,13 +18,11 @@ fn expect_compile(Result r) {
     };
 }
 
-fn expect_nomatch(Result r) {
+fn expect_nomatch(Result<Option<(int, int)>, RegexError> r) {
     match r {
-        Result::Ok(_) => panic "expected Err",
-        Result::Err(e) => match e {
-            RegexError::NoMatch => {},
-            default => panic "expected NoMatch",
-        },
+        Result::Ok(Option::None) => {},
+        Result::Ok(Option::Some(_)) => panic "expected None",
+        Result::Err(_) => panic "expected Ok(None)",
     };
 }
 
@@ -103,7 +101,7 @@ test("find_all split replace_all golden") {
     assert!(parts[2] == "c");
 }
 
-test("find no match is NoMatch") {
+test("find no match is None") {
     let re = must_ok(compile("xyz", ""));
     expect_nomatch(find(re, "abc"));
 }
@@ -111,7 +109,8 @@ test("find no match is NoMatch") {
 test("find returns byte span") {
     let re = must_ok(compile("ll", ""));
     let span = match find(re, "hello") {
-        Result::Ok(s) => s,
+        Result::Ok(Option::Some(s)) => s,
+        Result::Ok(Option::None) => panic "expected a match",
         Result::Err(_) => panic "find",
     };
     assert!(span[0] == 2);
@@ -121,14 +120,15 @@ test("find returns byte span") {
 test("find utf8 span is bytes not codepoints") {
     let re = must_ok(compile("é", ""));
     let span = match find(re, "café") {
-        Result::Ok(s) => s,
+        Result::Ok(Option::Some(s)) => s,
+        Result::Ok(Option::None) => panic "expected a match",
         Result::Err(_) => panic "find utf8",
     };
     assert!(span[0] == 3);
     assert!(span[1] == 5);
 }
 
-test("find_all empty subject is empty not NoMatch") {
+test("find_all empty subject is empty") {
     let re = must_ok(compile("a", ""));
     let spans = match find_all(re, "") {
         Result::Ok(s) => s,
@@ -137,7 +137,7 @@ test("find_all empty subject is empty not NoMatch") {
     assert!(spans.len() == 0);
 }
 
-test("find_all no match is empty not NoMatch") {
+test("find_all no match is empty") {
     let re = must_ok(compile("xyz", ""));
     let spans = match find_all(re, "abc") {
         Result::Ok(s) => s,

@@ -5,7 +5,7 @@ Module: `use regex::{…};` (package name `regex` from `coil.toml`).
 ## Types
 
 ```coil
-enum RegexError { Compile, Runtime, NoMatch, Utf8 }
+enum RegexError { Compile, Runtime, Utf8 }
 
 class Regex { pcre2: Pcre2, code: int, match_data: int, count: int }
 ```
@@ -38,9 +38,9 @@ All return `Result<_, RegexError>` unless noted.
 |----------|-------------|
 | `compile(pattern, flags)` | Build `Regex` |
 | `is_match(re, subject)` | Whole-string match test |
-| `find(re, subject)` | First match as `(start, end)` **byte** indices |
+| `find(re, subject)` | First match as `Some((start, end))` **byte** indices, `None` without a match |
 | `find_all(re, subject)` | All non-overlapping matches; empty vec if none |
-| `captures(re, subject)` | Capture groups for first match |
+| `captures(re, subject)` | `Some` capture groups for the first match, `None` without a match |
 | `captures_all(re, subject)` | Capture rows for every match |
 | `split(re, subject)` | Split on matches (trailing segment kept) |
 | `replace(re, subject, template)` | Replace first match; `$n`, `${name}`, `$$` |
@@ -79,10 +79,9 @@ let re = compile("[0-9]+", "")?;
 |---------|------|
 | `Compile` | Bad pattern or flags |
 | `Runtime` | PCRE2 runtime failure / internal bounds error |
-| `NoMatch` | `find` / `captures` with no match |
 | `Utf8` | Invalid UTF-8 when building strings |
 
-`find_all` on no matches returns `Ok([])`, not `NoMatch`.
+No match is not an error: `find` / `find_at` / `captures` return `Ok(None)` and `find_all` returns `Ok([])`.
 
 ## PCRE2 binding (FFI)
 

@@ -153,7 +153,6 @@ impl Pcre2 {
 enum RegexError {
     Compile,
     Runtime,
-    NoMatch,
     Utf8,
 }
 
@@ -461,19 +460,18 @@ impl Regex {
         return self.next_match(subject, 0)?;
     }
 
-    pub fn find(string subject) -> Result<(int, int), RegexError> {
-        if !self.next_match(subject, 0)? {
-            raise RegexError::NoMatch;
-        }
-        return self.span()?;
+    /// First match, as `(start, end)` byte indices; `None` when there is none.
+    pub fn find(string subject) -> Result<Option<(int, int)>, RegexError> {
+        return self.find_at(subject, 0)?;
     }
 
-    /// First match at or after byte `from`, as `(start, end)` byte indices.
-    pub fn find_at(string subject, int from) -> Result<(int, int), RegexError> {
+    /// First match at or after byte `from`, as `(start, end)` byte indices;
+    /// `None` when there is none.
+    pub fn find_at(string subject, int from) -> Result<Option<(int, int)>, RegexError> {
         if !self.next_match(subject, from)? {
-            raise RegexError::NoMatch;
+            return Option::None;
         }
-        return self.span()?;
+        return Option::Some(self.span()?);
     }
 
     /// Whether a match starts at the beginning of `subject`.
@@ -495,11 +493,12 @@ impl Regex {
         return self.find_all_from(subject, 0, Vec::new())?;
     }
 
-    pub fn captures(string subject) -> Result<Vec<string>, RegexError> {
+    /// The groups of the first match (group 0 first); `None` when there is none.
+    pub fn captures(string subject) -> Result<Option<Vec<string>>, RegexError> {
         if !self.next_match(subject, 0)? {
-            raise RegexError::NoMatch;
+            return Option::None;
         }
-        return self.capture_row()?;
+        return Option::Some(self.capture_row()?);
     }
 
     pub fn captures_all(string subject) -> Result<Vec<Vec<string>>, RegexError> {
@@ -530,7 +529,7 @@ fn is_match(Regex re, string subject) -> Result<bool, RegexError> {
     return re.is_match(subject)?;
 }
 
-fn find(Regex re, string subject) -> Result<(int, int), RegexError> {
+fn find(Regex re, string subject) -> Result<Option<(int, int)>, RegexError> {
     return re.find(subject)?;
 }
 
@@ -538,7 +537,7 @@ fn find_all(Regex re, string subject) -> Result<Vec<(int, int)>, RegexError> {
     return re.find_all(subject)?;
 }
 
-fn captures(Regex re, string subject) -> Result<Vec<string>, RegexError> {
+fn captures(Regex re, string subject) -> Result<Option<Vec<string>>, RegexError> {
     return re.captures(subject)?;
 }
 
@@ -567,11 +566,9 @@ fn must_match(Result<bool, RegexError> r) -> bool {
 impl Pattern for Regex {
     pub fn find_in(Regex re, string hay, int from) -> Option<Span> {
         return match re.find_at(hay, from) {
-            Result::Ok(span) => Option::Some(new Span(span[0], span[1])),
-            Result::Err(e) => match e {
-                RegexError::NoMatch => Option::None,
-                default => panic "regex: PCRE2 match failed",
-            },
+            Result::Ok(Option::Some(span)) => Option::Some(new Span(span[0], span[1])),
+            Result::Ok(Option::None) => Option::None,
+            Result::Err(_) => panic "regex: PCRE2 match failed",
         };
     }
 
