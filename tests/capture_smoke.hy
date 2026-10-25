@@ -7,7 +7,8 @@ test("captures group text") {
         Result::Err(_) => panic "compile",
     };
     let row = match captures(re, "ab") {
-        Result::Ok(v) => v,
+        Result::Ok(Option::Some(v)) => v,
+        Result::Ok(Option::None) => panic "expected a match",
         Result::Err(_) => panic "captures",
     };
     assert!(row.len() == 3);
@@ -15,17 +16,15 @@ test("captures group text") {
     assert!(row[2] == "b");
 }
 
-test("captures no match is NoMatch") {
+test("captures no match is None") {
     let re = match compile("xyz", "") {
         Result::Ok(v) => v,
         Result::Err(_) => panic "compile",
     };
     match captures(re, "abc") {
-        Result::Ok(_) => panic "expected Err",
-        Result::Err(e) => match e {
-            RegexError::NoMatch => {},
-            default => panic "expected NoMatch",
-        },
+        Result::Ok(Option::None) => {},
+        Result::Ok(Option::Some(_)) => panic "expected None",
+        Result::Err(_) => panic "expected Ok(None)",
     };
 }
 
@@ -50,7 +49,7 @@ test("captures_all rows") {
     assert!(second[2] == "2");
 }
 
-test("captures_all empty is empty not NoMatch") {
+test("captures_all empty is empty") {
     let re = match compile("a", "") {
         Result::Ok(v) => v,
         Result::Err(_) => panic "compile",
@@ -80,7 +79,8 @@ test("captures longer than one word and multi-byte UTF-8") {
         Result::Err(_) => panic "compile",
     };
     let row = match captures(re, "x<héllo wörld, a long capture>y") {
-        Result::Ok(v) => v,
+        Result::Ok(Option::Some(v)) => v,
+        Result::Ok(Option::None) => panic "expected a match",
         Result::Err(_) => panic "captures",
     };
     assert!(row[1] == "héllo wörld, a long capture");
@@ -93,7 +93,8 @@ test("capture longer than the first-try buffer") {
     };
     let long = "0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij-é-tail";
     let row = match captures(re, "[" + long + "]") {
-        Result::Ok(v) => v,
+        Result::Ok(Option::Some(v)) => v,
+        Result::Ok(Option::None) => panic "expected a match",
         Result::Err(_) => panic "captures",
     };
     assert!(row[1] == long);
@@ -105,7 +106,8 @@ test("unset optional group is empty") {
         Result::Err(_) => panic "compile",
     };
     let row = match captures(re, "b") {
-        Result::Ok(v) => v,
+        Result::Ok(Option::Some(v)) => v,
+        Result::Ok(Option::None) => panic "expected a match",
         Result::Err(_) => panic "captures",
     };
     assert!(row[1] == "");
@@ -130,7 +132,8 @@ test("unset group captures as empty") {
         Result::Err(_) => panic "compile",
     };
     let row = match captures(re, "b") {
-        Result::Ok(v) => v,
+        Result::Ok(Option::Some(v)) => v,
+        Result::Ok(Option::None) => panic "expected a match",
         Result::Err(_) => panic "captures",
     };
     assert!(row.len() == 3);
