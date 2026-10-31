@@ -40,7 +40,7 @@ const PCRE2_ENDANCHORED = 536870912;
 // subject on every match. The start offset must still be a char boundary.
 const PCRE2_NO_UTF_CHECK = 1073741824;
 
-/// Sign-extend a C `int` result from the low 32 bits of the return register.
+// Sign-extend a C `int` result from the low 32 bits of the return register.
 fn c_int(int raw) -> int {
     let low = raw & 4294967295;
     if low >= 2147483648 {
@@ -75,9 +75,9 @@ fn pcre2_substring_number_from_name(int code, string name) -> int {
     return c_int(pcre2_substring_number_from_name_8(code, name));
 }
 
-/// `pcre2_compile` writes its error through out-parameters, which `extern`
-/// blocks can't declare, so it goes through `declare` / `invoke`, where an
-/// int array argument is copied back after the call.
+// `pcre2_compile` writes its error through out-parameters, which `extern`
+// blocks can't declare, so it goes through `declare` / `invoke`, where an
+// int array argument is copied back after the call.
 class Pcre2 {
     lib: int,
     compile_id: int,
@@ -108,8 +108,8 @@ fn pcre2_open() -> Result<Pcre2, RegexError> {
     return new Pcre2(pcre2_lib, pcre2_compile_id, pcre2_match_id);
 }
 
-/// A one-word out-parameter. Never empty: an empty array would be passed as
-/// a raw pointer instead of a copied buffer.
+// A one-word out-parameter. Never empty: an empty array would be passed as
+// a raw pointer instead of a copied buffer.
 fn out_word(int initial) -> Vec<int> {
     let v: Vec<int> = Vec::new();
     v.push(initial);
@@ -117,7 +117,7 @@ fn out_word(int initial) -> Vec<int> {
 }
 
 impl Pcre2 {
-    /// Compiled pattern, or 0 when it does not compile.
+    // Compiled pattern, or 0 when it does not compile.
     pub fn compile(string pattern, int options) -> Result<int, RegexError> {
         let errorcode = out_word(0);
         let erroroffset = out_word(0);
@@ -126,10 +126,10 @@ impl Pcre2 {
         return ffi_ok(invoke(self.lib, self.compile_id, (pattern, length, options, errorcode, erroroffset, 0)))?;
     }
 
-    /// Match `subject` from byte `start_offset` with the match-time
-    /// `options`; the PCRE2 return code. Captures are sliced out of the coil
-    /// string by offset, so PCRE2 never reads the subject after the call and
-    /// needs no copy of it.
+    // Match `subject` from byte `start_offset` with the match-time
+    // `options`; the PCRE2 return code. Captures are sliced out of the coil
+    // string by offset, so PCRE2 never reads the subject after the call and
+    // needs no copy of it.
     pub fn match_at(int code, string subject, int start_offset, int match_data, int options) -> Result<int, RegexError> {
         let length = subject.len();
         // An offset inside a UTF-8 sequence is undefined behaviour under
@@ -141,7 +141,7 @@ impl Pcre2 {
         return c_int(rc);
     }
 
-    /// The first `count` offset pairs at `ovector`, as `2 * count` ints.
+    // The first `count` offset pairs at `ovector`, as `2 * count` ints.
     pub fn offsets(int ovector, int count) -> Result<Vec<int>, RegexError> {
         return match read_ints(self.lib, ovector, count * 2) {
             Result::Ok(v) => v,
@@ -192,9 +192,9 @@ fn parse_flags(string flags) -> int {
     return opts;
 }
 
-/// Where the next search starts after a match `[start, next)`. An empty match
-/// steps over one whole character, so the offset never lands inside a UTF-8
-/// sequence (PCRE2 rejects that).
+// Where the next search starts after a match `[start, next)`. An empty match
+// steps over one whole character, so the offset never lands inside a UTF-8
+// sequence (PCRE2 rejects that).
 fn advance_offset(string subject, int next, int start) -> int {
     if next > start {
         return next;
@@ -312,12 +312,12 @@ impl Regex {
         }
     }
 
-    /// Match from byte `offset`: `true` on a match, `false` on none.
+    // Match from byte `offset`: `true` on a match, `false` on none.
     fn next_match(string subject, int offset) -> Result<bool, RegexError> {
         return self.next_match_with(subject, offset, 0)?;
     }
 
-    /// `next_match` with match-time PCRE2 `options` (`PCRE2_ANCHORED`, …).
+    // `next_match` with match-time PCRE2 `options` (`PCRE2_ANCHORED`, …).
     fn next_match_with(string subject, int offset, int options) -> Result<bool, RegexError> {
         if offset < 0 {
             raise RegexError::Runtime;
@@ -338,7 +338,7 @@ impl Regex {
         return true;
     }
 
-    /// Offset pairs of the last match, read from PCRE2 once per match.
+    // Offset pairs of the last match, read from PCRE2 once per match.
     fn match_offsets() -> Result<Vec<int>, RegexError> {
         if self.offsets.len() == 0 {
             self.offsets = self.pcre2.offsets(self.ovector, self.count)?;
@@ -346,15 +346,15 @@ impl Regex {
         return self.offsets;
     }
 
-    /// Byte span of the last match. The start is where the match began, so
-    /// a pattern using `\K` reports the span from before the `\K`.
+    // Byte span of the last match. The start is where the match began, so
+    // a pattern using `\K` reports the span from before the `\K`.
     fn span() -> Result<(int, int), RegexError> {
         let start = pcre2_get_startchar(self.match_data);
         let ov = self.match_offsets()?;
         return (start, start + ov[1] - ov[0]);
     }
 
-    /// Text of group `index` in the last match; empty when unset or out of range.
+    // Text of group `index` in the last match; empty when unset or out of range.
     fn capture_at(int index) -> Result<string, RegexError> {
         if index < 0 || index >= self.count {
             return "";
@@ -368,7 +368,7 @@ impl Regex {
         return byte_slice(self.subject, start, ov[index * 2 + 1])?;
     }
 
-    /// Text of named group `name` in the last match; empty when unknown.
+    // Text of named group `name` in the last match; empty when unknown.
     fn capture_named(string name) -> Result<string, RegexError> {
         let index = pcre2_substring_number_from_name(self.code, name);
         if index < 0 {
@@ -460,13 +460,13 @@ impl Regex {
         return self.next_match(subject, 0)?;
     }
 
-    /// First match, as `(start, end)` byte indices; `None` when there is none.
+    // First match, as `(start, end)` byte indices; `None` when there is none.
     pub fn find(string subject) -> Result<Option<(int, int)>, RegexError> {
         return self.find_at(subject, 0)?;
     }
 
-    /// First match at or after byte `from`, as `(start, end)` byte indices;
-    /// `None` when there is none.
+    // First match at or after byte `from`, as `(start, end)` byte indices;
+    // `None` when there is none.
     pub fn find_at(string subject, int from) -> Result<Option<(int, int)>, RegexError> {
         if !self.next_match(subject, from)? {
             return Option::None;
@@ -474,17 +474,17 @@ impl Regex {
         return Option::Some(self.span()?);
     }
 
-    /// Whether a match starts at the beginning of `subject`.
+    // Whether a match starts at the beginning of `subject`.
     pub fn matches_prefix(string subject) -> Result<bool, RegexError> {
         return self.next_match_with(subject, 0, PCRE2_ANCHORED)?;
     }
 
-    /// Whether a match ends at the end of `subject`.
+    // Whether a match ends at the end of `subject`.
     pub fn matches_suffix(string subject) -> Result<bool, RegexError> {
         return self.next_match_with(subject, 0, PCRE2_ENDANCHORED)?;
     }
 
-    /// `template` with `$n` / `${name}` / `$$` expanded from the last match.
+    // `template` with `$n` / `${name}` / `$$` expanded from the last match.
     pub fn expand_template(string template) -> Result<string, RegexError> {
         return self.expand_replacement(template)?;
     }
@@ -493,7 +493,7 @@ impl Regex {
         return self.find_all_from(subject, 0, Vec::new())?;
     }
 
-    /// The groups of the first match (group 0 first); `None` when there is none.
+    // The groups of the first match (group 0 first); `None` when there is none.
     pub fn captures(string subject) -> Result<Option<Vec<string>>, RegexError> {
         if !self.next_match(subject, 0)? {
             return Option::None;
