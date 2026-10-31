@@ -1,4 +1,4 @@
-// Ported from coil-lang examples/regex_demo.hy — userland coil-regex.
+// Ported from coil-lang examples/regex_demo.coil — userland coil-regex.
 use regex::{Regex, compile, find_all, is_match, replace_all, split};
 use io::{stdout, write};
 use string::{format, to_bytes};
