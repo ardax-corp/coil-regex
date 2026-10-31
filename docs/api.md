@@ -7,10 +7,10 @@ Module: `use regex::{…};` (package name `regex` from `coil.toml`).
 ```coil
 enum RegexError { Compile, Runtime, Utf8 }
 
-class Regex { pcre2: Pcre2, code: int, match_data: int, count: int }
+class Regex { … }   // opaque: the compiled PCRE2 code and its match data
 ```
 
-`code` and `match_data` are PCRE2 pointers cast to `int`. A `Regex` keeps its last match, so it is **not** thread-sendable; use one `Regex` per thread.
+A `Regex` keeps its last match, so it is **not** thread-sendable; use one `Regex` per thread.
 
 `Regex` frees both from inherent `fn drop()` at GC / teardown.
 
@@ -32,12 +32,12 @@ Invalid flag letters → `RegexError::Compile`.
 
 ## Functions
 
-All return `Result<_, RegexError>` unless noted.
+Each function is also a `Regex` method of the same name without the `re` argument (`re.find_all(subject)`). All return `Result<_, RegexError>`.
 
 | Function | Description |
 |----------|-------------|
 | `compile(pattern, flags)` | Build `Regex` |
-| `is_match(re, subject)` | Whole-string match test |
+| `is_match(re, subject)` | Whether `re` matches anywhere in `subject` (anchor with `^…$` for the whole string) |
 | `find(re, subject)` | First match as `Some((start, end))` **byte** indices, `None` without a match |
 | `find_all(re, subject)` | All non-overlapping matches; empty vec if none |
 | `captures(re, subject)` | `Some` capture groups for the first match, `None` without a match |
