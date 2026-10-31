@@ -1,5 +1,7 @@
-// Userland PCRE2 regex: binds libpcre2-8 directly (no C shim) and keeps the
-// free-function API of the former virtual module.
+// Regular expressions for coil, backed by PCRE2: `compile` a pattern into a
+// `Regex`, then search, capture, split and replace with its methods (or the
+// free functions of the same names). Binds libpcre2-8 directly through FFI
+// (no C shim); `Regex` is also a `text::Pattern` for the string methods.
 
 use ffi::{declare, dload, invoke, read_ints};
 use ffi::types::{ConstBytes, Int, Ptr, String};
@@ -40,7 +42,7 @@ const PCRE2_ENDANCHORED = 536870912;
 // subject on every match. The start offset must still be a char boundary.
 const PCRE2_NO_UTF_CHECK = 1073741824;
 
-/// Sign-extend a C `int` result from the low 32 bits of the return register.
+// Sign-extend a C `int` result from the low 32 bits of the return register.
 fn c_int(int raw) -> int {
     let low = raw & 4294967295;
     if low >= 2147483648 {
@@ -75,9 +77,9 @@ fn pcre2_substring_number_from_name(int code, string name) -> int {
     return c_int(pcre2_substring_number_from_name_8(code, name));
 }
 
-/// `pcre2_compile` writes its error through out-parameters, which `extern`
-/// blocks can't declare, so it goes through `declare` / `invoke`, where an
-/// int array argument is copied back after the call.
+// `pcre2_compile` writes its error through out-parameters, which `extern`
+// blocks can't declare, so it goes through `declare` / `invoke`, where an
+// int array argument is copied back after the call.
 class Pcre2 {
     lib: int,
     compile_id: int,
@@ -108,8 +110,8 @@ fn pcre2_open() -> Result<Pcre2, RegexError> {
     return new Pcre2(pcre2_lib, pcre2_compile_id, pcre2_match_id);
 }
 
-/// A one-word out-parameter. Never empty: an empty array would be passed as
-/// a raw pointer instead of a copied buffer.
+// A one-word out-parameter. Never empty: an empty array would be passed as
+// a raw pointer instead of a copied buffer.
 fn out_word(int initial) -> Vec<int> {
     let v: Vec<int> = Vec::new();
     v.push(initial);
@@ -117,7 +119,7 @@ fn out_word(int initial) -> Vec<int> {
 }
 
 impl Pcre2 {
-    /// Compiled pattern, or 0 when it does not compile.
+    // Compiled pattern, or 0 when it does not compile.
     pub fn compile(string pattern, int options) -> Result<int, RegexError> {
         let errorcode = out_word(0);
         let erroroffset = out_word(0);
@@ -126,10 +128,10 @@ impl Pcre2 {
         return ffi_ok(invoke(self.lib, self.compile_id, (pattern, length, options, errorcode, erroroffset, 0)))?;
     }
 
-    /// Match `subject` from byte `start_offset` with the match-time
-    /// `options`; the PCRE2 return code. Captures are sliced out of the coil
-    /// string by offset, so PCRE2 never reads the subject after the call and
-    /// needs no copy of it.
+    // Match `subject` from byte `start_offset` with the match-time
+    // `options`; the PCRE2 return code. Captures are sliced out of the coil
+    // string by offset, so PCRE2 never reads the subject after the call and
+    // needs no copy of it.
     pub fn match_at(int code, string subject, int start_offset, int match_data, int options) -> Result<int, RegexError> {
         let length = subject.len();
         // An offset inside a UTF-8 sequence is undefined behaviour under
@@ -141,7 +143,7 @@ impl Pcre2 {
         return c_int(rc);
     }
 
-    /// The first `count` offset pairs at `ovector`, as `2 * count` ints.
+    // The first `count` offset pairs at `ovector`, as `2 * count` ints.
     pub fn offsets(int ovector, int count) -> Result<Vec<int>, RegexError> {
         return match read_ints(self.lib, ovector, count * 2) {
             Result::Ok(v) => v,
@@ -150,12 +152,59 @@ impl Pcre2 {
     }
 }
 
+/// The error of every fallible `regex` call.
+///
+/// Not finding a match is not an error: `find` and `captures` return
+/// `Ok(None)`, `find_all` an empty vector, and `is_match` `Ok(false)`.
+///
+/// # Examples
+///
+/// ```
+/// use regex::{compile, RegexError};
+/// # use tests::assert;
+/// assert!(compile("(", "").err() == Option::Some(RegexError::Compile));
+/// assert!(compile("a", "Z").err() == Option::Some(RegexError::Compile));
+/// ```
 enum RegexError {
+    /// The pattern does not compile, or the flags hold a letter other than
+    /// `i`, `m`, `s`, `x` or `u`.
     Compile,
+    /// PCRE2 failed while matching (for example, it hit its match limit),
+    /// libpcre2-8 could not be loaded, or a replacement template has an
+    /// unterminated `${`.
     Runtime,
+    /// A capture or slice of the subject is not valid UTF-8.
     Utf8,
 }
 
+/// A compiled regular expression, made by `compile`.
+///
+/// Every search method returns a `Result<_, RegexError>`. Match positions are
+/// byte offsets into the UTF-8 subject, not character indices. A `Regex`
+/// remembers its last match (`expand_template` reads it), so it is not safe
+/// to share between threads: compile one per thread. The PCRE2 code and match
+/// data are freed when the `Regex` is dropped.
+///
+/// `Regex` implements `text::Pattern`, so the `text::Searchable` string
+/// methods (`contains`, `split`, `replace_all`, `starts_with`, ...) take it
+/// wherever they take a literal. Those methods panic on a PCRE2 match failure;
+/// call the `Regex` methods to get a `Result` instead.
+///
+/// # Examples
+///
+/// ```
+/// use regex::{compile};
+/// use text::{Searchable};
+/// # use tests::assert;
+/// let digits = compile("[0-9]+", "").ok() ?? panic "bad pattern";
+/// assert!(digits.is_match("build 42") == Result::Ok(true));
+/// assert!(digits.find("build 42") == Result::Ok(Option::Some((6, 8))));
+///
+/// // As a `text::Pattern`:
+/// assert!("build 42".contains(digits));
+/// let parts = "a1b22c".split(digits);
+/// assert!(parts.len() == 3 && parts[0] == "a" && parts[2] == "c");
+/// ```
 class Regex {
     pcre2: Pcre2,
     code: int,
@@ -192,9 +241,9 @@ fn parse_flags(string flags) -> int {
     return opts;
 }
 
-/// Where the next search starts after a match `[start, next)`. An empty match
-/// steps over one whole character, so the offset never lands inside a UTF-8
-/// sequence (PCRE2 rejects that).
+// Where the next search starts after a match `[start, next)`. An empty match
+// steps over one whole character, so the offset never lands inside a UTF-8
+// sequence (PCRE2 rejects that).
 fn advance_offset(string subject, int next, int start) -> int {
     if next > start {
         return next;
@@ -238,6 +287,35 @@ fn push_all(Vec<byte> out, string s) {
     }
 }
 
+/// Compiles `pattern` (PCRE2 syntax) with the option letters in `flags`.
+///
+/// UTF-8 mode is always on. `flags` is any mix of these letters, or `""`:
+///
+/// | Flag | Meaning |
+/// |------|---------|
+/// | `i` | caseless |
+/// | `m` | multiline: `^` and `$` match at each line |
+/// | `s` | `.` also matches a newline |
+/// | `x` | extended: whitespace and `#` comments in the pattern are ignored |
+/// | `u` | Unicode properties for `\w`, `\d`, `\b` and the POSIX classes |
+///
+/// Backslashes are escaped in coil string literals, so the pattern `\d+` is
+/// written `"\\d+"`.
+///
+/// # Errors
+///
+/// `RegexError::Compile` for a pattern PCRE2 rejects or an unknown flag
+/// letter; `RegexError::Runtime` when libpcre2-8 cannot be loaded.
+///
+/// # Examples
+///
+/// ```
+/// use regex::{compile};
+/// # use tests::assert;
+/// let re = compile("hello", "i").ok() ?? panic "bad pattern";
+/// assert!(re.is_match("Say HELLO") == Result::Ok(true));
+/// assert!(compile("(unclosed", "").is_err());
+/// ```
 fn compile(string pattern, string flags) -> Result<Regex, RegexError> {
     let opts = parse_flags(flags);
     if opts == 0 {
@@ -312,12 +390,12 @@ impl Regex {
         }
     }
 
-    /// Match from byte `offset`: `true` on a match, `false` on none.
+    // Match from byte `offset`: `true` on a match, `false` on none.
     fn next_match(string subject, int offset) -> Result<bool, RegexError> {
         return self.next_match_with(subject, offset, 0)?;
     }
 
-    /// `next_match` with match-time PCRE2 `options` (`PCRE2_ANCHORED`, …).
+    // `next_match` with match-time PCRE2 `options` (`PCRE2_ANCHORED`, …).
     fn next_match_with(string subject, int offset, int options) -> Result<bool, RegexError> {
         if offset < 0 {
             raise RegexError::Runtime;
@@ -338,7 +416,7 @@ impl Regex {
         return true;
     }
 
-    /// Offset pairs of the last match, read from PCRE2 once per match.
+    // Offset pairs of the last match, read from PCRE2 once per match.
     fn match_offsets() -> Result<Vec<int>, RegexError> {
         if self.offsets.len() == 0 {
             self.offsets = self.pcre2.offsets(self.ovector, self.count)?;
@@ -346,15 +424,15 @@ impl Regex {
         return self.offsets;
     }
 
-    /// Byte span of the last match. The start is where the match began, so
-    /// a pattern using `\K` reports the span from before the `\K`.
+    // Byte span of the last match. The start is where the match began, so
+    // a pattern using `\K` reports the span from before the `\K`.
     fn span() -> Result<(int, int), RegexError> {
         let start = pcre2_get_startchar(self.match_data);
         let ov = self.match_offsets()?;
         return (start, start + ov[1] - ov[0]);
     }
 
-    /// Text of group `index` in the last match; empty when unset or out of range.
+    // Text of group `index` in the last match; empty when unset or out of range.
     fn capture_at(int index) -> Result<string, RegexError> {
         if index < 0 || index >= self.count {
             return "";
@@ -368,7 +446,7 @@ impl Regex {
         return byte_slice(self.subject, start, ov[index * 2 + 1])?;
     }
 
-    /// Text of named group `name` in the last match; empty when unknown.
+    // Text of named group `name` in the last match; empty when unknown.
     fn capture_named(string name) -> Result<string, RegexError> {
         let index = pcre2_substring_number_from_name(self.code, name);
         if index < 0 {
@@ -441,6 +519,22 @@ impl Regex {
         };
     }
 
+    /// The pieces of `subject` between matches, in order.
+    ///
+    /// The text before the first match and after the last one are kept, so
+    /// a match at either end gives an empty first or last piece, and `subject`
+    /// without a match is one piece.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use regex::{compile};
+    /// # use tests::assert;
+    /// let sep = compile("\\s*,\\s*", "").ok() ?? panic "bad pattern";
+    /// let parts = sep.split("a , b,c").unwrap_or(Vec::new());
+    /// assert!(parts.len() == 3);
+    /// assert!(parts[0] == "a" && parts[1] == "b" && parts[2] == "c");
+    /// ```
     pub fn split(string subject) -> Result<Vec<string>, RegexError> {
         let parts: Vec<string> = Vec::new();
         let offset = 0;
@@ -456,17 +550,62 @@ impl Regex {
         }
     }
 
+    /// Whether the pattern matches anywhere in `subject`.
+    ///
+    /// Anchor the pattern (`^...$`) to test the whole string.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use regex::{compile};
+    /// # use tests::assert;
+    /// let re = compile("^[a-z]+$", "").ok() ?? panic "bad pattern";
+    /// assert!(re.is_match("coil") == Result::Ok(true));
+    /// assert!(re.is_match("coil 1") == Result::Ok(false));
+    /// ```
     pub fn is_match(string subject) -> Result<bool, RegexError> {
         return self.next_match(subject, 0)?;
     }
 
-    /// First match, as `(start, end)` byte indices; `None` when there is none.
+    /// The first match, as `(start, end)` byte offsets; `None` when there is
+    /// none.
+    ///
+    /// `subject[start..end]` is the matched text. The start is where the
+    /// match began, so a pattern using `\K` reports the span from before the
+    /// `\K`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use regex::{compile};
+    /// # use tests::assert;
+    /// let re = compile("[0-9]+", "").ok() ?? panic "bad pattern";
+    /// assert!(re.find("id 314") == Result::Ok(Option::Some((3, 6))));
+    /// assert!(re.find("none") == Result::Ok(Option::None));
+    /// ```
     pub fn find(string subject) -> Result<Option<(int, int)>, RegexError> {
         return self.find_at(subject, 0)?;
     }
 
-    /// First match at or after byte `from`, as `(start, end)` byte indices;
-    /// `None` when there is none.
+    /// The first match at or after byte offset `from`, as `(start, end)`
+    /// byte offsets; `None` when there is none or `from` is past the end.
+    ///
+    /// Lookbehinds and `\b` still see the text before `from`.
+    ///
+    /// # Errors
+    ///
+    /// `RegexError::Runtime` when `from` is negative or inside a UTF-8
+    /// sequence.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use regex::{compile};
+    /// # use tests::assert;
+    /// let re = compile("o", "").ok() ?? panic "bad pattern";
+    /// assert!(re.find_at("foo", 2) == Result::Ok(Option::Some((2, 3))));
+    /// assert!(re.find_at("foo", 3) == Result::Ok(Option::None));
+    /// ```
     pub fn find_at(string subject, int from) -> Result<Option<(int, int)>, RegexError> {
         if !self.next_match(subject, from)? {
             return Option::None;
@@ -474,26 +613,102 @@ impl Regex {
         return Option::Some(self.span()?);
     }
 
-    /// Whether a match starts at the beginning of `subject`.
+    /// Whether a match starts at the beginning of `subject` (PCRE2's
+    /// `ANCHORED`). Backs `string.starts_with(re)`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use regex::{compile};
+    /// # use tests::assert;
+    /// let year = compile("[0-9]{4}-", "").ok() ?? panic "bad pattern";
+    /// assert!(year.matches_prefix("2026-10-31") == Result::Ok(true));
+    /// assert!(year.matches_prefix("on 2026-10-31") == Result::Ok(false));
+    /// ```
     pub fn matches_prefix(string subject) -> Result<bool, RegexError> {
         return self.next_match_with(subject, 0, PCRE2_ANCHORED)?;
     }
 
-    /// Whether a match ends at the end of `subject`.
+    /// Whether a match ends at the end of `subject` (PCRE2's `ENDANCHORED`).
+    /// Backs `string.ends_with(re)`.
+    ///
+    /// A match ending at the end is found even when an earlier, shorter match
+    /// does not end there: `a|ab` is a suffix of `"xab"`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use regex::{compile};
+    /// # use tests::assert;
+    /// let re = compile("a|ab", "").ok() ?? panic "bad pattern";
+    /// assert!(re.matches_suffix("xab") == Result::Ok(true));
+    /// assert!(re.matches_suffix("abx") == Result::Ok(false));
+    /// ```
     pub fn matches_suffix(string subject) -> Result<bool, RegexError> {
         return self.next_match_with(subject, 0, PCRE2_ENDANCHORED)?;
     }
 
-    /// `template` with `$n` / `${name}` / `$$` expanded from the last match.
+    /// `template` with `$n`, `${name}` and `$$` expanded from the last
+    /// successful match of this `Regex`.
+    ///
+    /// `$n` (one or more digits) is group `n`, `${name}` a named group and
+    /// `$$` a literal `$`. A group that did not take part, or does not
+    /// exist, expands to `""`. A `$` followed by anything else is kept as is.
+    /// Before any match every group is `""`.
+    ///
+    /// # Errors
+    ///
+    /// `RegexError::Runtime` for an unterminated `${`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use regex::{compile};
+    /// # use tests::assert;
+    /// let re = compile("(?<key>\\w+)=(\\d+)", "").ok() ?? panic "bad pattern";
+    /// assert!(re.is_match("port=8080") == Result::Ok(true));
+    /// assert!(re.expand_template("${key} is $2 ($$)") == Result::Ok("port is 8080 ($)"));
+    /// ```
     pub fn expand_template(string template) -> Result<string, RegexError> {
         return self.expand_replacement(template)?;
     }
 
+    /// Every non-overlapping match, left to right, as `(start, end)` byte
+    /// offsets; empty when there is none.
+    ///
+    /// After an empty match the search moves on by one character, so a
+    /// pattern that can match `""` still ends.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use regex::{compile};
+    /// # use tests::assert;
+    /// let re = compile("[0-9]+", "").ok() ?? panic "bad pattern";
+    /// let spans = re.find_all("a1 b22 c333").unwrap_or(Vec::new());
+    /// assert!(spans.len() == 3);
+    /// assert!(spans[1] == (4, 6));
+    /// ```
     pub fn find_all(string subject) -> Result<Vec<(int, int)>, RegexError> {
         return self.find_all_from(subject, 0, Vec::new())?;
     }
 
-    /// The groups of the first match (group 0 first); `None` when there is none.
+    /// The groups of the first match, group 0 (the whole match) first;
+    /// `None` when there is none.
+    ///
+    /// The vector holds group 0 up to the highest group that took part in
+    /// the match; an unset group inside that range is `""`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use regex::{compile};
+    /// # use tests::assert;
+    /// let re = compile("(\\w+)@(\\w+)\\.com", "").ok() ?? panic "bad pattern";
+    /// let groups = re.captures("mail ana@example.com").unwrap_or(Option::None) ?? Vec::new();
+    /// assert!(groups.len() == 3);
+    /// assert!(groups[0] == "ana@example.com" && groups[1] == "ana" && groups[2] == "example");
+    /// ```
     pub fn captures(string subject) -> Result<Option<Vec<string>>, RegexError> {
         if !self.next_match(subject, 0)? {
             return Option::None;
@@ -501,10 +716,35 @@ impl Regex {
         return Option::Some(self.capture_row()?);
     }
 
+    /// The groups of every non-overlapping match, one row per match in the
+    /// shape `captures` returns; empty when there is none.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use regex::{compile};
+    /// # use tests::assert;
+    /// let re = compile("(\\w)=(\\d)", "").ok() ?? panic "bad pattern";
+    /// let rows = re.captures_all("a=1 b=2").unwrap_or(Vec::new());
+    /// assert!(rows.len() == 2);
+    /// assert!(rows[1][1] == "b" && rows[1][2] == "2");
+    /// ```
     pub fn captures_all(string subject) -> Result<Vec<Vec<string>>, RegexError> {
         return self.captures_all_from(subject, 0, Vec::new())?;
     }
 
+    /// `subject` with its first match replaced by `template`, expanded as in
+    /// `expand_template` (`$n`, `${name}`, `$$`); `subject` unchanged when
+    /// there is no match.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use regex::{compile};
+    /// # use tests::assert;
+    /// let re = compile("(\\w+) (\\w+)", "").ok() ?? panic "bad pattern";
+    /// assert!(re.replace("hello world, bye now", "$2 $1") == Result::Ok("world hello, bye now"));
+    /// ```
     pub fn replace(string subject, string template) -> Result<string, RegexError> {
         if !self.next_match(subject, 0)? {
             return subject;
@@ -516,39 +756,79 @@ impl Regex {
         return head + piece + tail;
     }
 
+    /// `subject` with every non-overlapping match replaced by `template`,
+    /// expanded per match as in `expand_template`; `subject` unchanged when
+    /// there is no match.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use regex::{compile};
+    /// # use tests::assert;
+    /// let re = compile("(\\w)=(\\d)", "").ok() ?? panic "bad pattern";
+    /// assert!(re.replace_all("a=1 b=2", "$2:$1") == Result::Ok("1:a 2:b"));
+    /// ```
     pub fn replace_all(string subject, string template) -> Result<string, RegexError> {
         return self.replace_all_from(subject, template, 0, "", false)?;
     }
 }
 
+/// `re.split(subject)`: the pieces of `subject` between matches.
 fn split(Regex re, string subject) -> Result<Vec<string>, RegexError> {
     return re.split(subject)?;
 }
 
+/// `re.is_match(subject)`: whether `re` matches anywhere in `subject`.
 fn is_match(Regex re, string subject) -> Result<bool, RegexError> {
     return re.is_match(subject)?;
 }
 
+/// `re.find(subject)`: the first match as `(start, end)` byte offsets, or `None`.
 fn find(Regex re, string subject) -> Result<Option<(int, int)>, RegexError> {
     return re.find(subject)?;
 }
 
+/// `re.find_all(subject)`: every non-overlapping match as `(start, end)` byte
+/// offsets.
+///
+/// # Examples
+///
+/// ```
+/// use regex::{compile, find_all};
+/// # use tests::assert;
+/// let re = compile("o+", "").ok() ?? panic "bad pattern";
+/// let spans = find_all(re, "foo boo").unwrap_or(Vec::new());
+/// assert!(spans.len() == 2 && spans[0] == (1, 3));
+/// ```
 fn find_all(Regex re, string subject) -> Result<Vec<(int, int)>, RegexError> {
     return re.find_all(subject)?;
 }
 
+/// `re.captures(subject)`: the groups of the first match, or `None`.
 fn captures(Regex re, string subject) -> Result<Option<Vec<string>>, RegexError> {
     return re.captures(subject)?;
 }
 
+/// `re.captures_all(subject)`: the groups of every match.
 fn captures_all(Regex re, string subject) -> Result<Vec<Vec<string>>, RegexError> {
     return re.captures_all(subject)?;
 }
 
+/// `re.replace(subject, template)`: `subject` with its first match replaced.
 fn replace(Regex re, string subject, string template) -> Result<string, RegexError> {
     return re.replace(subject, template)?;
 }
 
+/// `re.replace_all(subject, template)`: `subject` with every match replaced.
+///
+/// # Examples
+///
+/// ```
+/// use regex::{compile, replace_all};
+/// # use tests::assert;
+/// let re = compile("\\s+", "").ok() ?? panic "bad pattern";
+/// assert!(replace_all(re, "a  b\tc", " ") == Result::Ok("a b c"));
+/// ```
 fn replace_all(Regex re, string subject, string template) -> Result<string, RegexError> {
     return re.replace_all(subject, template)?;
 }
@@ -564,6 +844,8 @@ fn must_match(Result<bool, RegexError> r) -> bool {
 // `"foobar".contains(re)`, `line.split(re)`, `s.replace_all(re, "$1")`.
 // A PCRE2 failure while matching (such as its match limit) panics.
 impl Pattern for Regex {
+    /// The first match at or after byte `from`, as a `text::Span`. Panics on a
+    /// PCRE2 match failure.
     pub fn find_in(Regex re, string hay, int from) -> Option<Span> {
         return match re.find_at(hay, from) {
             Result::Ok(Option::Some(span)) => Option::Some(new Span(span[0], span[1])),
@@ -572,14 +854,20 @@ impl Pattern for Regex {
         };
     }
 
+    /// Whether a match starts at the beginning of `hay`. Panics on a PCRE2
+    /// match failure.
     pub fn is_prefix_of(Regex re, string hay) -> bool {
         return must_match(re.matches_prefix(hay));
     }
 
+    /// Whether a match ends at the end of `hay`. Panics on a PCRE2 match
+    /// failure.
     pub fn is_suffix_of(Regex re, string hay) -> bool {
         return must_match(re.matches_suffix(hay));
     }
 
+    /// `template` expanded from the last match, as in `Regex::expand_template`.
+    /// Panics on an unterminated `${`.
     pub fn expand(Regex re, string template) -> string {
         return match re.expand_template(template) {
             Result::Ok(s) => s,
