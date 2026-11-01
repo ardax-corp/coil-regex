@@ -9,7 +9,7 @@ PCRE2 regular expressions for [coil](https://github.com/ardax-corp/coil-lang). `
 - libffi (for coil FFI)
 - [coil-stdlib](https://github.com/ardax-corp/coil-stdlib) on the module path (`text::Pattern`)
 
-There is no native shim to build: `src/regex.hy` calls libpcre2-8 directly through `extern`.
+There is no native shim to build: `src/regex.coil` calls libpcre2-8 directly through `extern`.
 
 ## Example
 
@@ -39,7 +39,7 @@ fn main() {
 lib=$(pkg-config --variable=libdir libpcre2-8)/libpcre2-8.so.0
 coil --root ../coil-regex/src --root ../coil-stdlib/src \
      --allow-dload pcre2-8 --dload-pin pcre2-8=$(sha256sum "$lib" | cut -d' ' -f1) \
-     --ffi-search-path "$(dirname "$lib")" main.hy
+     --ffi-search-path "$(dirname "$lib")" main.coil
 # 1=a 2=b
 # has a number
 ```
@@ -61,7 +61,7 @@ make test COIL_ROOTS='--root ../coil-stdlib/src'   # tests and doc examples
 Run the demo:
 
 ```bash
-coil --root src --root ../coil-stdlib/src --allow-dload pcre2-8 --dload-pin pcre2-8=<sha256> --ffi-search-path <libdir> examples/regex_demo.hy
+coil --root src --root ../coil-stdlib/src --allow-dload pcre2-8 --dload-pin pcre2-8=<sha256> --ffi-search-path <libdir> examples/regex_demo.coil
 # true,2,a->1 b->2,a|b|c
 ```
 

@@ -1,10 +1,10 @@
 # Consuming coil-regex
 
-Package name is `regex`. Put this package's `src/` on `--root` and `use regex::{…}` resolves here. `extern "libpcre2-8.so.0"` in `src/regex.hy` loads the system libpcre2-8 (dload stem `pcre2-8`; `libpcre2-8.dylib` on macOS). Application code does not call `dload`.
+Package name is `regex`. Put this package's `src/` on `--root` and `use regex::{…}` resolves here. `extern "libpcre2-8.so.0"` in `src/regex.coil` loads the system libpcre2-8 (dload stem `pcre2-8`; `libpcre2-8.dylib` on macOS). Application code does not call `dload`.
 
 ## Sibling checkout
 
-Clone this repo next to your project. coil reads no `coil.toml` and no `coil.lock`: pass `--root ../coil-regex/src` so `use regex` loads `src/regex.hy`.
+Clone this repo next to your project. coil reads no `coil.toml` and no `coil.lock`: pass `--root ../coil-regex/src` so `use regex` loads `src/regex.coil`.
 
 Install libpcre2-8 (`libpcre2-8-0` / `libpcre2-dev` on Debian/Ubuntu, `pcre2` on Homebrew). Nothing to build here. Grant and pin the library when you run:
 
@@ -12,7 +12,7 @@ Install libpcre2-8 (`libpcre2-8-0` / `libpcre2-dev` on Debian/Ubuntu, `pcre2` on
 lib=$(pkg-config --variable=libdir libpcre2-8)/libpcre2-8.so.0   # libpcre2-8.dylib on macOS
 coil --root ../coil-regex/src \
      --allow-dload pcre2-8 --dload-pin pcre2-8=$(sha256sum "$lib" | cut -d' ' -f1) \
-     --ffi-search-path "$(dirname "$lib")" main.hy
+     --ffi-search-path "$(dirname "$lib")" main.coil
 ```
 
 The pin is checked against the file found on `--ffi-search-path`. `--dload-trusted pcre2-8` instead of the pin lets dload use the system loader's own search, unhashed.
