@@ -21,7 +21,7 @@ test("a Regex searches strings through Searchable") {
 test("anchored prefix and suffix") {
     assert!("2026-10-22".starts_with(re("[0-9]{4}-")));
     assert!(!"v2026".starts_with(re("[0-9]+")));
-    assert!("main.coil".ends_with(re("\\.h[a-z]")));
+    assert!("main.hy".ends_with(re("\\.h[a-z]")));
     // The leftmost match ends early, a later one ends at the end.
     assert!("xab".ends_with(re("a|ab")));
     assert!(!"abx".ends_with(re("a|ab")));
