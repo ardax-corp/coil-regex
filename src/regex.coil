@@ -336,7 +336,6 @@ fn compile(string pattern, string flags) -> Result<Regex, RegexError> {
 }
 
 impl Regex {
-    #[max_depth(4096)]
     fn capture_row_from(int i, Vec<string> row) -> Result<Vec<string>, RegexError> {
         if i >= self.count {
             return row;
@@ -345,7 +344,6 @@ impl Regex {
         return self.capture_row_from(i + 1, row)?;
     }
 
-    #[max_depth(4096)]
     fn find_all_from(string subject, int offset, Vec<(int, int)> spans) -> Result<Vec<(int, int)>, RegexError> {
         if !self.next_match(subject, offset)? {
             return spans;
@@ -355,7 +353,6 @@ impl Regex {
         return self.find_all_from(subject, advance_offset(subject, end, start), spans)?;
     }
 
-    #[max_depth(4096)]
     fn captures_all_from(string subject, int offset, Vec<Vec<string>> rows) -> Result<Vec<Vec<string>>, RegexError> {
         if !self.next_match(subject, offset)? {
             return rows;
@@ -365,7 +362,6 @@ impl Regex {
         return self.captures_all_from(subject, advance_offset(subject, end, start), rows)?;
     }
 
-    #[max_depth(4096)]
     fn replace_all_from(string subject, string template, int pos, string out, bool replaced) -> Result<string, RegexError> {
         if !self.next_match(subject, pos)? {
             if !replaced {
