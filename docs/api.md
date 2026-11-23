@@ -85,4 +85,4 @@ No match is not an error: `find` / `find_at` / `captures` return `Ok(None)` and 
 
 ## PCRE2 binding (FFI)
 
-`regex.coil` binds libpcre2-8 directly: an `extern "libpcre2-8.so.0" { … }` block for plain calls, and a private `Pcre2` class (`declare` / `invoke`) for the calls that write through out-parameters and for `pcre2_match_8`, which takes the subject as `ffi::types::ConstBytes` (the string's bytes are lent in place, not copied) with `PCRE2_NO_UTF_CHECK` (coil strings are valid UTF-8). The unsuffixed `pcre2_*` wrappers are package-internal. Use `Regex` and the free functions from coil source.
+`regex.coil` binds libpcre2-8 directly: every call is in one `extern "libpcre2-8.so.0" { … }` block. `pcre2_compile_8` gets its out-parameters as `ffi::types::Bytes` buffers, the offset vector is copied out with libc's `memcpy` (found through libpcre2-8's dependencies), and `pcre2_match_8` takes the subject as `ffi::types::ConstBytes` (the string's bytes are lent in place, not copied) with `PCRE2_NO_UTF_CHECK` (coil strings are valid UTF-8). The unsuffixed `pcre2_*` wrappers are package-internal. Use `Regex` and the free functions from coil source.

@@ -1,10 +1,10 @@
 // Regular expressions for coil, backed by PCRE2: `compile` a pattern into a
 // `Regex`, then search, capture, split and replace with its methods (or the
-// free functions of the same names). Binds libpcre2-8 directly through FFI
-// (no C shim); `Regex` is also a `text::Pattern` for the string methods.
+// free functions of the same names). Binds libpcre2-8 directly in an
+// `extern` block (no C shim); `Regex` is also a `text::Pattern` for the
+// string methods.
 
-use ffi::{declare, dload, invoke, read_ints};
-use ffi::types::{ConstBytes, Int, Ptr, String};
+use ffi::types::{Bytes, ConstBytes};
 use string::{from_bytes, slice_bytes, to_bytes};
 use text::{Pattern, Span};
 
@@ -19,6 +19,14 @@ extern "libpcre2-8.so.0" {
     fn pcre2_get_startchar_8(int match_data) -> int;
     fn pcre2_get_ovector_pointer_8(int match_data) -> int;
     fn pcre2_substring_number_from_name_8(int code, string name) -> int;
+    // `errorcode` and `erroroffset` are out-parameters PCRE2 requires.
+    fn pcre2_compile_8(string pattern, int length, int options, Bytes errorcode, Bytes erroroffset, int ccontext) -> int;
+    // `ConstBytes` lends the subject's bytes in place; `string` would copy
+    // the whole subject into a C string on every match.
+    fn pcre2_match_8(int code, ConstBytes subject, int length, int start_offset, int options, int match_data, int mcontext) -> int;
+    // libc's, found through libpcre2-8's own dependencies: copies the
+    // offset vector out of the match data.
+    fn memcpy(Bytes dst, int src, int n) -> int;
 }
 
 // `PCRE2_ZERO_TERMINATED`: `~(PCRE2_SIZE)0`.
@@ -77,79 +85,53 @@ fn pcre2_substring_number_from_name(int code, string name) -> int {
     return c_int(pcre2_substring_number_from_name_8(code, name));
 }
 
-// `pcre2_compile` writes its error through out-parameters, which `extern`
-// blocks can't declare, so it goes through `declare` / `invoke`, where an
-// int array argument is copied back after the call.
-class Pcre2 {
-    lib: int,
-    compile_id: int,
-    match_id: int,
-}
-
-fn ffi_ok(Result r) -> Result<int, RegexError> {
-    return match r {
-        Result::Ok(v) => v,
-        Result::Err(_) => raise RegexError::Runtime,
-    };
-}
-
-// One dload per process: every `Regex` shares these ids.
-static let pcre2_lib = 0;
-static let pcre2_compile_id = 0;
-static let pcre2_match_id = 0;
-
-fn pcre2_open() -> Result<Pcre2, RegexError> {
-    if pcre2_lib == 0 {
-        let lib = ffi_ok(dload("libpcre2-8.so.0"))?;
-        pcre2_compile_id = ffi_ok(declare(lib, "pcre2_compile_8", (String, Int, Int, Ptr, Ptr, Int), Int))?;
-        // `ConstBytes` lends the subject's bytes in place; `String` would copy
-        // the whole subject into a C string on every match.
-        pcre2_match_id = ffi_ok(declare(lib, "pcre2_match_8", (Int, ConstBytes, Int, Int, Int, Int, Int), Int))?;
-        pcre2_lib = lib;
+// `n` zero bytes for an out-parameter or a copy.
+fn zeroed(int n) -> Vec<byte> {
+    let v: Vec<byte> = Vec::new();
+    while v.len() < n {
+        v.push(0 as byte);
     }
-    return new Pcre2(pcre2_lib, pcre2_compile_id, pcre2_match_id);
-}
-
-// A one-word out-parameter. Never empty: an empty array would be passed as
-// a raw pointer instead of a copied buffer.
-fn out_word(int initial) -> Vec<int> {
-    let v: Vec<int> = Vec::new();
-    v.push(initial);
     return v;
 }
 
-impl Pcre2 {
-    // Compiled pattern, or 0 when it does not compile.
-    pub fn compile(string pattern, int options) -> Result<int, RegexError> {
-        let errorcode = out_word(0);
-        let erroroffset = out_word(0);
-        // A bare global in an `invoke` tuple reads as a callback; pass a local.
-        let length = ZERO_TERMINATED;
-        return ffi_ok(invoke(self.lib, self.compile_id, (pattern, length, options, errorcode, erroroffset, 0)))?;
-    }
+// Compiled pattern, or 0 when it does not compile.
+fn pcre2_compile(string pattern, int options) -> int {
+    return pcre2_compile_8(pattern, ZERO_TERMINATED, options, zeroed(8), zeroed(8), 0);
+}
 
-    // Match `subject` from byte `start_offset` with the match-time
-    // `options`; the PCRE2 return code. Captures are sliced out of the coil
-    // string by offset, so PCRE2 never reads the subject after the call and
-    // needs no copy of it.
-    pub fn match_at(int code, string subject, int start_offset, int match_data, int options) -> Result<int, RegexError> {
-        let length = subject.len();
-        // An offset inside a UTF-8 sequence is undefined behaviour under
-        // `PCRE2_NO_UTF_CHECK`; let PCRE2 check (and reject) that one.
-        if start_offset >= length || ((subject[start_offset] as int) & 192) != 128 {
-            options = options | PCRE2_NO_UTF_CHECK;
+// Match `subject` from byte `start_offset` with the match-time `options`;
+// the PCRE2 return code. Captures are sliced out of the coil string by
+// offset, so PCRE2 never reads the subject after the call and needs no
+// copy of it.
+fn pcre2_match(int code, string subject, int start_offset, int match_data, int options) -> int {
+    let length = subject.len();
+    // An offset inside a UTF-8 sequence is undefined behaviour under
+    // `PCRE2_NO_UTF_CHECK`; let PCRE2 check (and reject) that one.
+    if start_offset >= length || ((subject[start_offset] as int) & 192) != 128 {
+        options = options | PCRE2_NO_UTF_CHECK;
+    }
+    return c_int(pcre2_match_8(code, subject, length, start_offset, options, match_data, 0));
+}
+
+// The first `count` offset pairs at `ovector` (`PCRE2_SIZE`, 8 bytes
+// little-endian each), as `2 * count` ints.
+fn pcre2_offsets(int ovector, int count) -> Vec<int> {
+    let n = count * 2;
+    let raw = zeroed(n * 8);
+    memcpy(raw, ovector, n * 8);
+    let out: Vec<int> = Vec::new();
+    let i = 0;
+    while i < n {
+        let v = 0;
+        let k = 7;
+        while k >= 0 {
+            v = (v << 8) | (raw[i * 8 + k] as int);
+            k = k - 1;
         }
-        let rc = ffi_ok(invoke(self.lib, self.match_id, (code, subject, length, start_offset, options, match_data, 0)))?;
-        return c_int(rc);
+        out.push(v);
+        i = i + 1;
     }
-
-    // The first `count` offset pairs at `ovector`, as `2 * count` ints.
-    pub fn offsets(int ovector, int count) -> Result<Vec<int>, RegexError> {
-        return match read_ints(self.lib, ovector, count * 2) {
-            Result::Ok(v) => v,
-            Result::Err(_) => raise RegexError::Runtime,
-        };
-    }
+    return out;
 }
 
 /// The error of every fallible `regex` call.
@@ -170,7 +152,7 @@ enum RegexError {
     /// `i`, `m`, `s`, `x` or `u`.
     Compile,
     /// PCRE2 failed while matching (for example, it hit its match limit),
-    /// libpcre2-8 could not be loaded, or a replacement template has an
+    /// PCRE2 could not allocate match data, or a replacement template has an
     /// unterminated `${`.
     Runtime,
     /// A capture or slice of the subject is not valid UTF-8.
@@ -206,7 +188,6 @@ enum RegexError {
 /// assert!(parts.len() == 3 && parts[0] == "a" && parts[2] == "c");
 /// ```
 class Regex {
-    pcre2: Pcre2,
     code: int,
     match_data: int,
     // PCRE2's offset vector inside `match_data`; fixed for its lifetime.
@@ -305,7 +286,9 @@ fn push_all(Vec<byte> out, string s) {
 /// # Errors
 ///
 /// `RegexError::Compile` for a pattern PCRE2 rejects or an unknown flag
-/// letter; `RegexError::Runtime` when libpcre2-8 cannot be loaded.
+/// letter; `RegexError::Runtime` when PCRE2 cannot allocate match data.
+/// A missing libpcre2-8 is a build mismatch, as for any `extern` block, and
+/// panics.
 ///
 /// # Examples
 ///
@@ -321,8 +304,7 @@ fn compile(string pattern, string flags) -> Result<Regex, RegexError> {
     if opts == 0 {
         raise RegexError::Compile;
     }
-    let pcre2 = pcre2_open()?;
-    let code = pcre2.compile(pattern, opts)?;
+    let code = pcre2_compile(pattern, opts);
     if code == 0 {
         raise RegexError::Compile;
     }
@@ -332,7 +314,7 @@ fn compile(string pattern, string flags) -> Result<Regex, RegexError> {
         raise RegexError::Runtime;
     }
     let ovector = pcre2_get_ovector_pointer(match_data);
-    return new Regex(pcre2, code, match_data, ovector, 0, "", Vec::new());
+    return new Regex(code, match_data, ovector, 0, "", Vec::new());
 }
 
 impl Regex {
@@ -399,7 +381,7 @@ impl Regex {
         if offset > subject.len() {
             return false;
         }
-        let rc = self.pcre2.match_at(self.code, subject, offset, self.match_data, options)?;
+        let rc = pcre2_match(self.code, subject, offset, self.match_data, options);
         if rc == PCRE2_ERROR_NOMATCH {
             return false;
         }
@@ -415,7 +397,7 @@ impl Regex {
     // Offset pairs of the last match, read from PCRE2 once per match.
     fn match_offsets() -> Result<Vec<int>, RegexError> {
         if self.offsets.len() == 0 {
-            self.offsets = self.pcre2.offsets(self.ovector, self.count)?;
+            self.offsets = pcre2_offsets(self.ovector, self.count);
         }
         return self.offsets;
     }
