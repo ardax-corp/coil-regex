@@ -14,6 +14,7 @@ concurrency:
 
 env:
   CI: "true"
+  CARGO_TERM_COLOR: always
 
 jobs:
   test:
@@ -21,17 +22,61 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: coil-regex
 
       - name: Install deps
         run: sudo apt-get update && sudo apt-get install -y libpcre2-dev libffi-dev build-essential
 
-      # coil comes from the coil-lang `edge` release (a snapshot of its main,
-      # rebuilt after every green coil-lang CI run) instead of a source build.
-      - name: Install coil (edge)
-        id: coil
-        uses: ardax-corp/coil-lang/.github/actions/setup-coil@main
+      - uses: dtolnay/rust-toolchain@stable
+
+      # This branch tracks coil-lang `feature/native`, which the `edge`
+      # release (a snapshot of main) does not have: build coil from it.
+      - uses: actions/checkout@v4
         with:
-          stdlib: true
+          repository: ardax-corp/coil-lang
+          ref: feature/native
+          path: .coil-lang
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ardax-corp/coil-stdlib
+          ref: feature/native
+          path: .coil-stdlib
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .coil-lang
+
+      - name: Build coil (feature/native)
+        id: coil
+        run: |
+          cargo build --release --manifest-path .coil-lang/Cargo.toml --bin coil --bin coil-test
+          # `coil package` links the native runtime from beside the coil binary.
+          cargo build --release --manifest-path .coil-lang/Cargo.toml -p coil-rt
+          echo "$PWD/.coil-lang/target/release" >> "$GITHUB_PATH"
+          echo "stdlib=$PWD/.coil-stdlib/src" >> "$GITHUB_OUTPUT"
 
       - name: Test
+        working-directory: coil-regex
         run: make test COIL_ROOTS='--root ${{ steps.coil.outputs.stdlib }}'
+
+      # AOT: the demo packaged as a native executable, linking libpcre2-8
+      # by name, run from another directory.
+      - name: Package demo
+        working-directory: coil-regex
+        run: |
+          set -euo pipefail
+          lib="$(make -s print-lib)"
+          dir="$(dirname "$lib")"
+          pin="pcre2-8=$(sha256sum "$lib" | awk '{print $1}')"
+          ver="$(pkg-config --modversion libpcre2-8)"
+          app="$RUNNER_TEMP/pkg"
+          mkdir -p "$app"
+          coil package --allow-dload pcre2-8 --dload-pin "$pin" --ffi-search-path "$dir/" \
+            --ffi-native "name=pcre2-8,version=$ver,path=$dir" \
+            --root src --root "${{ steps.coil.outputs.stdlib }}" \
+            -o "$app/regex_demo" examples/regex_demo.coil
+          out=$(cd "$RUNNER_TEMP" && "$app/regex_demo")
+          echo "$out"
+          test "$out" = "true,2,a->1 b->2,a|b|c"
