@@ -12,7 +12,7 @@ fn must_re(Result r) -> Regex {
 
 fn main() {
     let re = must_re(compile("(\\w+)=(\\d+)", "i"));
-    write(stdout(), to_bytes(format("%z,", match is_match(re, "X=42") {
+    let _ = write(stdout(), to_bytes(format("%z,", match is_match(re, "X=42") {
         Result::Ok(b) => b,
         Result::Err(_) => false,
     })));
@@ -20,8 +20,8 @@ fn main() {
         Result::Ok(s) => s,
         Result::Err(_) => panic "find_all",
     };
-    write(stdout(), to_bytes(format("%i,", spans.len())));
-    write(stdout(), to_bytes(format("%s,", match replace_all(re, "a=1 b=2", "$1->$2") {
+    let _ = write(stdout(), to_bytes(format("%i,", spans.len())));
+    let _ = write(stdout(), to_bytes(format("%s,", match replace_all(re, "a=1 b=2", "$1->$2") {
         Result::Ok(s) => s,
         Result::Err(_) => "",
     })));
@@ -30,5 +30,5 @@ fn main() {
         Result::Ok(p) => p,
         Result::Err(_) => panic "split",
     };
-    write(stdout(), to_bytes(format("%s|%s|%s", parts[0], parts[1], parts[2])));
+    let _ = write(stdout(), to_bytes(format("%s|%s|%s", parts[0], parts[1], parts[2])));
 }
